@@ -1,582 +1,77 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>SKYWARD.</title>
-<style>
-  html,body{margin:0;height:100%;background:#0a0d14;overflow:hidden}
-  canvas{display:block;width:100vw;height:100vh}
-  body.idle{cursor:none}
-  #ui{
-    position:fixed; left:0; right:0; bottom:3.4vh;
-    display:flex; gap:26px; justify-content:center;
-    opacity:1; transition:opacity .9s ease;
-  }
-  body.idle #ui{opacity:.16}
-  #ui button{
-    appearance:none; background:none; border:0; padding:8px 6px; cursor:pointer;
-    font:400 13px/1 "Hiragino Sans","Yu Gothic",system-ui,sans-serif;
-    letter-spacing:.34em; text-indent:.34em;
-    color:rgba(226,232,240,.36); transition:color .5s ease;
-  }
-  #ui button:hover{color:rgba(226,232,240,.72)}
-  #ui button.on{color:rgba(240,246,255,.94)}
-  #ui button:focus-visible{outline:1px solid rgba(226,232,240,.5); outline-offset:4px}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>SKYWARD.</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #0a0d14;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    body.idle {
+      cursor: none;
+    }
+
+    #ui {
+      position: fixed;
+      right: 0;
+      bottom: 3.4vh;
+      left: 0;
+      display: flex;
+      gap: 26px;
+      justify-content: center;
+      opacity: 1;
+      transition: opacity 0.9s ease;
+    }
+
+    body.idle #ui {
+      opacity: 0.16;
+    }
+
+    #ui button {
+      padding: 8px 6px;
+      border: 0;
+      color: rgb(226 232 240 / 36%);
+      font: 400 13px/1 "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+      letter-spacing: 0.34em;
+      text-indent: 0.34em;
+      background: none;
+      cursor: pointer;
+      appearance: none;
+      transition: color 0.5s ease;
+    }
+
+    #ui button:hover {
+      color: rgb(226 232 240 / 72%);
+    }
+
+    #ui button.on {
+      color: rgb(240 246 255 / 94%);
+    }
+
+    #ui button:focus-visible {
+      outline: 1px solid rgb(226 232 240 / 50%);
+      outline-offset: 4px;
+    }
+  </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="ui">
-  <button id="b-rain" type="button">雨</button>
-  <button id="b-snow" type="button">雪</button>
-</div>
-<script>
-(() => {
-'use strict';
-
-// ======================================================================
-//  モード
-//    URL に #snow / #rain を付けると切り替わります。
-//    キーボードの S / R でも切り替わります（リロードが走ります）。
-// ======================================================================
-const DEFAULT_MODE = 'rain';
-
-// 両モード共通
-const BASE = {
-  FOV       : 0.92,    // 小さいほど広角。粒の膨らみが激しくなる
-  MAX_DROPS : 320,
-  GRAIN     : 0.5,     // 粒子感。背景に焼き込むので毎フレームは動かない
-  Z_HIT     : 0.09,    // 手前で粒を消す位置
-};
-
-const MODES = {
-
-  // ---- 雨 --------------------------------------------------------
-  rain: {
-    Z0        : 3.0,
-    VZ        : [2.07, 4.14],    // 落下速度（標準から80%高速）
-    R_DROP    : [0.0035, 0.0125],
-    HIT_RATE  : [0.6, 4.0],      // 毎秒の着弾数（弱→強）
-    PASS_RATE : [14, 85],        // 毎秒の通過数（弱→強）
-    FAR_COUNT : 120,
-    FAR_VZ    : [2.88, 6.12],
-    WIND      : 0.95,
-    WANDER    : 0,               // ひらひら揺れる量
-    STREAK    : 1.0,             // 進行方向への伸び
-    EXPOSURE  : 0.42,            // 残像。雨は尾を引くほど自然
-    GAIN      : 0.80,
-    SOFT      : 1.00,            // 1=にじんだ球、0=くっきりした点
-    A_BASE    : 0.07,            // 粒の基本の明るさ
-    A_CAP     : 0.52,            // 明るさの上限
-    A_FAR     : 1.00,            // 遠景の明るさ倍率
-    SPLASH    : true,            // 着弾時は波紋なしで細かな飛沫だけ出す
-    BOLT_AMP  : 0.35,
-    BOLT_GAP  : [70, 180],
-    SKY       : { c0:[16,21,30], c1:[31,41,55], f0:[44,55,72], f1:[66,80,99] },
-    COOL      : [188,212,238],
-    CYCLE     : 1.0,             // 降り方の周期の速さ
-  },
-
-  // ---- 雪 --------------------------------------------------------
-  //  雨との違いは色ではなく、速度・軌道・空の明るさ
-  snow: {
-    Z0        : 2.2,
-    VZ        : [0.22, 0.60],    // 雨の1/5以下
-    R_DROP    : [0.0035, 0.0115],// 大きすぎると綿のように潰れる
-    HIT_RATE  : [0.4, 2.2],
-    PASS_RATE : [12, 46],
-    FAR_COUNT : 170,
-    FAR_VZ    : [0.35, 0.95],
-    WIND      : 0.18,            // 速いと吹雪になって雪に見えない
-    WANDER    : 1.0,             // 落ちながら横に泳ぐ
-    STREAK    : 0.10,            // 雪は線を引かない
-    EXPOSURE  : 0.12,            // 残像を出すと雨に見えてしまう
-    GAIN      : 1.00,
-    SOFT      : 0.32,            // 雪は輪郭を持つ。にじませると綿埃になる
-    A_BASE    : 0.20,
-    A_CAP     : 0.80,
-    A_FAR     : 1.70,
-    SPLASH    : false,
-    BOLT_AMP  : 0,               // 雷は鳴らさない
-    BOLT_GAP  : [9999, 9999],
-    SKY       : { c0:[29,30,41], c1:[51,49,61], f0:[52,52,68], f1:[80,76,92] },
-    COOL      : [234,240,250],
-    CYCLE     : 0.55,            // 雨よりゆっくり強弱する
-  },
-};
-
-let MODE = (() => {
-  const q = (location.hash + location.search).toLowerCase();
-  if (q.includes('snow')) return 'snow';
-  if (q.includes('rain')) return 'rain';
-  return DEFAULT_MODE;
-})();
-const P = Object.assign({}, BASE, MODES[MODE]);
-
-// ======================================================================
-
-const cv  = document.getElementById('c');
-const ctx = cv.getContext('2d');
-
-let W = 0, H = 0, cx = 0, cy = 0, f = 0, dpr = 1, halfDiag = 1;
-
-const bg      = document.createElement('canvas'), bgc = bg.getContext('2d');
-const bgFlash = document.createElement('canvas'), bfc = bgFlash.getContext('2d');
-const bgPrev  = document.createElement('canvas'), pbctx = bgPrev.getContext('2d');
-const bgMix   = document.createElement('canvas'), mbctx = bgMix.getContext('2d');
-let noiseCv = null;
-
-const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-const drops = [], far = [], splashes = [], bolts = [];
-let t = 0, nextBolt = rand(P.BOLT_GAP[0], P.BOLT_GAP[1]) * 0.4;
-let windX = 0, windY = 0;
-let hitAcc = 0, passAcc = 0;
-let budget = P.MAX_DROPS;
-let weatherLevel = 1;
-let transition = null;
-let skyBlend = 1, previousSky = null;
-const SWITCH_OUT = 1.4, SWITCH_PAUSE = 0.35, SWITCH_IN = 1.6, SWITCH_SKY = 3.2;
-
-function rand(a, b) { return a + Math.random() * (b - a); }
-function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-const hex = n => '#' + n.map(v => clamp(Math.round(v),0,255).toString(16).padStart(2,'0')).join('');
-const mix = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
-
-function project(x, y, z) {
-  const s = f / z;
-  return [cx + x * s, cy + y * s, s];
-}
-
-// ---- 背景 -------------------------------------------------------------
-function paintSky(g, lift, Q = P) {
-  const S = Q.SKY;
-  const gr = g.createLinearGradient(0, 0, 0, H);
-  gr.addColorStop(0, hex(mix(S.c0, S.f0, lift)));
-  gr.addColorStop(1, hex(mix(S.c1, S.f1, lift)));
-  g.fillStyle = gr;
-  g.fillRect(0, 0, W, H);
-
-  // 粒子感は静止させて焼き込む。毎フレーム動かすとフリッカーになる
-  if (Q.GRAIN > 0 && noiseCv) {
-    g.save();
-    g.globalCompositeOperation = 'overlay';
-    g.globalAlpha = 0.05 * Q.GRAIN;
-    g.fillStyle = g.createPattern(noiseCv, 'repeat');
-    g.fillRect(0, 0, W, H);
-    g.restore();
-  }
-}
-
-function buildNoise() {
-  if (noiseCv) return;
-  noiseCv = document.createElement('canvas');
-  noiseCv.width = noiseCv.height = 128;
-  const nc = noiseCv.getContext('2d');
-  const img = nc.createImageData(128, 128);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = 116 + Math.random() * 24;
-    img.data[i] = img.data[i+1] = img.data[i+2] = v;
-    img.data[i+3] = 255;
-  }
-  nc.putImageData(img, 0, 0);
-}
-
-function resize() {
-  dpr = Math.min(2, window.devicePixelRatio || 1);
-  W = innerWidth; H = innerHeight;
-  cx = W / 2; cy = H / 2;
-  halfDiag = Math.hypot(W, H) / 2;
-  f = (W / 2) * P.FOV;
-
-  for (const [c, g] of [[cv, ctx], [bg, bgc], [bgFlash, bfc], [bgPrev, pbctx], [bgMix, mbctx]]) {
-    c.width  = Math.round(W * dpr);
-    c.height = Math.round(H * dpr);
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  buildNoise();
-  paintSky(bgc, 0);
-  paintSky(bfc, 1);
-  if (previousSky && skyBlend < 1) paintSky(pbctx, 0, previousSky);
-  seedFar();
-  budget = W * H > 900000 ? P.MAX_DROPS : 220;
-}
-
-// ---- 粒 ---------------------------------------------------------------
-function newWander() {
-  if (!P.WANDER) return { wa: 0, wf: 0, wp: 0 };
-  // 画面上の揺れ幅を一定にするため、振幅は z に比例させる
-  return { wa: rand(7, 26) * P.WANDER / f, wf: rand(0.35, 0.95), wp: rand(0, 6.28) };
-}
-
-function spawn(hit) {
-  if (drops.length > budget) return;
-  const vz = rand(P.VZ[0], P.VZ[1]);
-  const flight = (P.Z0 - P.Z_HIT) / vz;
-  const turb = rand(0.82, 1.18);
-
-  let sx, sy;
-  if (hit) {
-    sx = rand(-0.05, 1.05) * W;
-    sy = rand(-0.05, 1.05) * H;
-  } else {
-    const a = Math.random() * Math.PI * 2;
-    const r = halfDiag * rand(1.12, 3.4);
-    sx = cx + Math.cos(a) * r;
-    sy = cy + Math.sin(a) * r;
-  }
-  const tx = (sx - cx) * P.Z_HIT / f;
-  const ty = (sy - cy) * P.Z_HIT / f;
-
-  drops.push(Object.assign({
-    x: tx - windX * turb * flight,
-    y: ty - windY * turb * flight,
-    z: P.Z0, zs: P.Z0, vz, turb, hit,
-    r: rand(P.R_DROP[0], P.R_DROP[1]),
-    age: 0, px: null, py: null,
-  }, newWander()));
-}
-
-function newFar(z) {
-  const a = Math.random() * Math.PI * 2;
-  const r = halfDiag * rand(0.05, 1.5);
-  return Object.assign({
-    x: Math.cos(a) * r * 5 / f,
-    y: Math.sin(a) * r * 5 / f,
-    z, vz: rand(P.FAR_VZ[0], P.FAR_VZ[1]),
-    r: rand(0.006, 0.016), turb: rand(0.8, 1.2),
-  }, newWander());
-}
-function seedFar() {
-  far.length = 0;
-  for (let i = 0; i < P.FAR_COUNT; i++) far.push(newFar(rand(5, 26)));
-}
-
-function dropColor(g, a) {
-  const c = P.COOL;
-  return `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a * weatherLevel})`;
-}
-
-function impact(px, py, rad) {
-  if (!P.SPLASH) {
-    splashes.push({ settle: true, x: px, y: py, r0: rad, k: 0, life: rand(2.2, 3.8) });
-    return;
-  }
-  const crown = [];
-  const n = 5 + (Math.random() * 7 | 0);
-  for (let i = 0; i < n; i++) {
-    crown.push({ a: Math.random() * Math.PI * 2, v: rand(0.6, 1.5), s: rand(0.15, 0.4) });
-  }
-  splashes.push({ settle: false, x: px, y: py, r0: rad, k: 0, life: rand(1.4, 2.1), crown });
-}
-
-function intensity(tt) {
-  const s = P.CYCLE;
-  const a = 0.5 + 0.5 * Math.sin(tt * s / 47);
-  const b = 0.5 + 0.5 * Math.sin(tt * s / 113 + 1.7);
-  const c = 0.5 + 0.5 * Math.sin(tt * s / 19 + 0.4);
-  const v = 0.45 * a + 0.40 * b + 0.15 * c;
-  return clamp(0.10 + 0.90 * Math.pow(v, 1.55), 0, 1) * (reduced ? 0.35 : 1);
-}
-
-function flashLevel() {
-  let v = 0;
-  for (const b of bolts) {
-    for (const [off, amp, dec] of b.seq) {
-      const u = b.t - off;
-      if (u > 0) v += amp * Math.exp(-u / dec);
-    }
-  }
-  return clamp(v, 0, 1) * weatherLevel;
-}
-
-function smoothstep(v) {
-  v = clamp(v, 0, 1);
-  return v * v * (3 - 2 * v);
-}
-
-function smootherstep(v) {
-  v = clamp(v, 0, 1);
-  return v * v * v * (v * (v * 6 - 15) + 10);
-}
-
-function updateTransition(dt) {
-  if (!transition) return;
-  transition.elapsed += dt;
-
-  if (transition.phase === 'out') {
-    weatherLevel = transition.from * (1 - smoothstep(transition.elapsed / SWITCH_OUT));
-    if (transition.elapsed >= SWITCH_OUT) {
-      weatherLevel = 0;
-      transition.phase = 'pause';
-      transition.elapsed = 0;
-    }
-  } else if (transition.phase === 'pause') {
-    weatherLevel = 0;
-    if (transition.elapsed >= SWITCH_PAUSE) {
-      applyMode(transition.target, true);
-      transition.phase = 'in';
-      transition.elapsed = 0;
-    }
-  } else {
-    weatherLevel = smoothstep(transition.elapsed / SWITCH_IN);
-    skyBlend = smootherstep(transition.elapsed / SWITCH_SKY);
-    if (transition.elapsed >= SWITCH_SKY) {
-      weatherLevel = 1;
-      skyBlend = 1;
-      previousSky = null;
-      transition = null;
-    }
-  }
-}
-
-function currentSky() {
-  if (!previousSky || skyBlend >= 1) return bg;
-  mbctx.clearRect(0, 0, W, H);
-  mbctx.globalAlpha = 1;
-  mbctx.drawImage(bgPrev, 0, 0, W, H);
-  mbctx.globalAlpha = skyBlend;
-  mbctx.drawImage(bg, 0, 0, W, H);
-  mbctx.globalAlpha = 1;
-  return bgMix;
-}
-
-// ---- ループ -----------------------------------------------------------
-let last = performance.now();
-function frame(now) {
-  let dt = (now - last) / 1000;
-  last = now;
-  if (dt > 0.05) dt = 0.05;
-  t += dt;
-  updateTransition(dt);
-
-  const I = intensity(t);
-  const ws = 0.35 + 0.65 * I;
-  windX = P.WIND * ws * (Math.sin(t / 61) * 0.75 + Math.sin(t / 23 + 1.1) * 0.35);
-  windY = P.WIND * ws * (Math.sin(t / 79 + 2.2) * 0.45 + Math.sin(t / 31) * 0.20);
-
-  if (weatherLevel > 0.95 && P.BOLT_AMP > 0 && t > nextBolt) {
-    nextBolt = t + rand(P.BOLT_GAP[0], P.BOLT_GAP[1]);
-    bolts.push({ t: 0, seq: [[0, 0.45 * P.BOLT_AMP, 0.30], [0.22, 1.0 * P.BOLT_AMP, 0.70]] });
-  }
-  for (let i = bolts.length - 1; i >= 0; i--) {
-    bolts[i].t += dt;
-    if (bolts[i].t > 2.2) bolts.splice(i, 1);
-  }
-  const flash = flashLevel();
-
-  hitAcc  += dt * weatherLevel * (P.HIT_RATE[0]  + (P.HIT_RATE[1]  - P.HIT_RATE[0])  * I) * (reduced ? 0.4 : 1);
-  passAcc += dt * weatherLevel * (P.PASS_RATE[0] + (P.PASS_RATE[1] - P.PASS_RATE[0]) * I) * (reduced ? 0.4 : 1);
-  while (hitAcc  >= 1) { hitAcc  -= 1; spawn(true);  }
-  while (passAcc >= 1) { passAcc -= 1; spawn(false); }
-
-  // 背景を半透明で重ねる＝前フレームが尾を引く
-  ctx.globalCompositeOperation = 'source-over';
-  const exposure = previousSky
-    ? previousSky.EXPOSURE + (P.EXPOSURE - previousSky.EXPOSURE) * skyBlend
-    : P.EXPOSURE;
-  ctx.globalAlpha = 1 - exposure;
-  ctx.drawImage(currentSky(), 0, 0, W, H);
-  ctx.globalAlpha = 1;
-  if (flash > 0.003) {
-    ctx.globalAlpha = flash;
-    ctx.drawImage(bgFlash, 0, 0, W, H);
-    ctx.globalAlpha = 1;
-  }
-
-  // 遠景
-  ctx.lineCap = 'round';
-  for (const d of far) {
-    d.z -= d.vz * dt;
-    d.x += windX * d.turb * dt;
-    d.y += windY * d.turb * dt;
-    if (d.z < 5) { Object.assign(d, newFar(26 + Math.random() * 4)); continue; }
-    const s = f / d.z;
-    const ax = d.wa ? d.wa * d.z * Math.sin(t * d.wf + d.wp) : 0;
-    const ay = d.wa ? d.wa * d.z * Math.cos(t * d.wf * 0.83 + d.wp * 1.7) : 0;
-    const px = cx + (d.x + ax) * s, py = cy + (d.y + ay) * s;
-    if (px < -40 || px > W + 40 || py < -40 || py > H + 40) continue;
-    const rad = Math.max(0.9, d.r * s);
-    const g = 0;
-    const a = (0.035 + 0.17 * g) * P.GAIN * P.A_FAR
-            * clamp((26 - d.z) / 10, 0, 1) * clamp((d.z - 5) / 3.5, 0, 1);
-    ctx.strokeStyle = dropColor(g, a);
-    ctx.lineWidth = rad * 1.6;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(px - ((px - cx) * 0.02 + windX * 3) * P.STREAK,
-               py - ((py - cy) * 0.02 + windY * 3) * P.STREAK);
-    ctx.stroke();
-  }
-
-  // 手前
-  for (let i = drops.length - 1; i >= 0; i--) {
-    const d = drops[i];
-    d.age += dt;
-    d.z -= d.vz * dt;
-    d.x += windX * d.turb * dt;
-    d.y += windY * d.turb * dt;
-
-    const s = f / d.z;
-    const ax = d.wa ? d.wa * d.z * Math.sin(t * d.wf + d.wp) : 0;
-    const ay = d.wa ? d.wa * d.z * Math.cos(t * d.wf * 0.83 + d.wp * 1.7) : 0;
-    const px = cx + (d.x + ax) * s, py = cy + (d.y + ay) * s;
-    const rad = d.r * s;
-
-    if (d.z <= P.Z_HIT) {
-      if (px > -60 && px < W + 60 && py > -60 && py < H + 60) {
-        impact(px, py, rad);
-      }
-      drops.splice(i, 1);
-      continue;
-    }
-    if (px < -rad - 80 || px > W + rad + 80 || py < -rad - 80 || py > H + rad + 80) {
-      if (d.z < P.Z0 * 0.75) { drops.splice(i, 1); continue; }
-      d.px = px; d.py = py;
-      continue;
-    }
-
-    const g = 0;
-    const fade = clamp(d.age / 0.60, 0, 1) * clamp((d.zs - d.z) / 0.35, 0, 1);
-    const a = clamp(P.A_BASE, 0, P.A_CAP) * P.GAIN * fade;
-
-    if (d.px !== null) {
-      let vx = (px - d.px) * P.STREAK, vy = (py - d.py) * P.STREAK;
-      const len = Math.hypot(vx, vy);
-      const maxLen = rad * 5.5 + 6;
-      if (len > maxLen) { vx *= maxLen / len; vy *= maxLen / len; }
-
-      if (rad > 4) {
-        // カメラへ近づくにつれて大きく、柔らかくぼける
-        const soft = clamp(P.SOFT + (1 - P.SOFT) * clamp((0.35 - d.z) / 0.30, 0, 1), 0, 1);
-        const outer = rad * (1 + 0.75 * soft);
-        const inner = rad * (1 - soft) * 0.75;
-        const rg = ctx.createRadialGradient(px, py, inner, px, py, outer);
-        rg.addColorStop(0, dropColor(g, a * 0.90));
-        rg.addColorStop(0.55, dropColor(g, a * (0.30 + 0.42 * (1 - soft))));
-        rg.addColorStop(1, dropColor(g, 0));
-        ctx.fillStyle = rg;
-        ctx.beginPath();
-        ctx.arc(px, py, outer, 0, 6.2832);
-        ctx.fill();
-        if (len > 1.5) {
-          ctx.strokeStyle = dropColor(g, a * 0.35);
-          ctx.lineWidth = rad * 0.9;
-          ctx.beginPath();
-          ctx.moveTo(px, py);
-          ctx.lineTo(px - vx, py - vy);
-          ctx.stroke();
-        }
-      } else if (len > 1.2) {
-        ctx.strokeStyle = dropColor(g, a);
-        ctx.lineWidth = Math.max(1.0, rad * 1.9);
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(px - vx, py - vy);
-        ctx.stroke();
-      } else {
-        ctx.fillStyle = dropColor(g, a);
-        ctx.beginPath();
-        ctx.arc(px, py, Math.max(0.7, rad), 0, 6.2832);
-        ctx.fill();
-      }
-    }
-    d.px = px; d.py = py;
-  }
-
-  // 雨粒の着弾。円形の波紋は描かず、細かな飛沫だけを残す
-  ctx.globalCompositeOperation = 'lighter';
-  for (let i = splashes.length - 1; i >= 0; i--) {
-    const sp = splashes[i];
-    sp.k += dt / sp.life;
-    if (sp.k >= 1) { splashes.splice(i, 1); continue; }
-    const inv = 1 - sp.k;
-    const ease = 1 - Math.pow(inv, 2.4);
-    if (sp.settle) {
-      const rr = sp.r0 * (1 + 0.30 * ease);
-      const sg = ctx.createRadialGradient(sp.x, sp.y, rr * 0.35, sp.x, sp.y, rr * 1.3);
-      sg.addColorStop(0, dropColor(0, inv * 0.34 * P.GAIN));
-      sg.addColorStop(0.6, dropColor(0, inv * 0.14 * P.GAIN));
-      sg.addColorStop(1, dropColor(0, 0));
-      ctx.fillStyle = sg;
-      ctx.beginPath();
-      ctx.arc(sp.x, sp.y, rr * 1.3, 0, 6.2832);
-      ctx.fill();
-      continue;
-    }
-    for (const c of sp.crown) {
-      const dist = (sp.r0 + 70 * c.v) * ease;
-      ctx.fillStyle = dropColor(0, inv * 0.26 * P.GAIN);
-      ctx.beginPath();
-      ctx.arc(sp.x + Math.cos(c.a) * dist, sp.y + Math.sin(c.a) * dist,
-              Math.max(1.0, sp.r0 * c.s * inv), 0, 6.2832);
-      ctx.fill();
-    }
-  }
-  ctx.globalCompositeOperation = 'source-over';
-
-  requestAnimationFrame(frame);
-}
-
-// ---- モード切り替え ---------------------------------------------------
-const btn = { rain: document.getElementById('b-rain'), snow: document.getElementById('b-snow') };
-
-function applyMode(name, blendSky = false) {
-  if (blendSky) {
-    previousSky = {
-      SKY: P.SKY,
-      GRAIN: P.GRAIN, EXPOSURE: P.EXPOSURE,
-    };
-    skyBlend = 0;
-  }
-  MODE = name;
-  Object.assign(P, BASE, MODES[name]);   // 両モードは同じキーを持つので取り残しは出ない
-
-  paintSky(bgc, 0);
-  paintSky(bfc, 1);
-  if (previousSky) paintSky(pbctx, 0, previousSky);
-  drops.length = 0;
-  splashes.length = 0;
-  bolts.length = 0;
-  hitAcc = passAcc = 0;
-  seedFar();
-  nextBolt = t + rand(P.BOLT_GAP[0], P.BOLT_GAP[1]) * 0.5;
-}
-
-function setMode(name) {
-  if (!MODES[name] || (transition ? transition.target === name : name === MODE)) return;
-  transition = { target: name, phase: 'out', elapsed: 0, from: weatherLevel };
-
-  for (const k in btn) btn[k].classList.toggle('on', k === name);
-  try { history.replaceState(null, '', '#' + name); } catch (e) {}
-}
-
-for (const k in btn) {
-  btn[k].addEventListener('click', () => { setMode(k); poke(); });
-}
-addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
-  if (k === 's') setMode('snow');
-  if (k === 'r') setMode('rain');
-});
-
-// ---- カーソルを引っ込める（操作要素ではない）---------------------------
-let idleTimer;
-function poke() {
-  document.body.classList.remove('idle');
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => document.body.classList.add('idle'), 2600);
-}
-addEventListener('pointermove', poke, { passive: true });
-addEventListener('pointerdown', poke, { passive: true });
-addEventListener('resize', resize);
-resize();
-applyMode(MODE);
-for (const k in btn) btn[k].classList.toggle('on', k === MODE);
-poke();
-requestAnimationFrame(frame);
-})();
-</script>
+  <canvas id="c" aria-hidden="true"></canvas>
+  <div id="ui" role="group" aria-label="天候の切り替え">
+    <button id="b-rain" type="button">雨</button>
+    <button id="b-snow" type="button">雪</button>
+  </div>
+  <script src="app.js"></script>
 </body>
 </html>
