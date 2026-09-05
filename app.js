@@ -79,7 +79,7 @@
   const controlValues = { amount: document.getElementById('amount-value') };
   const layers = createLayers();
   const particles = { drops: [], far: [], splashes: [], bolts: [] };
-  const viewport = { width: 0, height: 0, cx: 0, cy: 0, focal: 0, halfDiagonal: 1, dpr: 1 };
+  const viewport = { width: 0, height: 0, cx: 0, cy: 0, focal: 0, dpr: 1 };
   const state = {
     mode: modeFromLocation(),
     config: null,
@@ -216,7 +216,6 @@
     viewport.height = innerHeight;
     viewport.cx = viewport.width / 2;
     viewport.cy = viewport.height / 2;
-    viewport.halfDiagonal = Math.hypot(viewport.width, viewport.height) / 2;
     viewport.focal = viewport.cx * state.config.FOV;
 
     for (const target of [{ element: canvas, context }, ...Object.values(layers)]) {
@@ -250,20 +249,23 @@
     const turbulence = randomBetween(0.82, 1.18);
     let screenX;
     let screenY;
+    let targetDepth;
 
     if (willHit) {
       screenX = randomBetween(-0.05, 1.05) * viewport.width;
       screenY = randomBetween(-0.05, 1.05) * viewport.height;
+      targetDepth = state.config.Z_HIT;
     } else {
-      const angle = Math.random() * TAU;
-      const radius = viewport.halfDiagonal * randomBetween(1.12, 3.4);
-      screenX = viewport.cx + Math.cos(angle) * radius;
-      screenY = viewport.cy + Math.sin(angle) * radius;
+      screenX = randomBetween(-0.1, 1.1) * viewport.width;
+      screenY = randomBetween(-0.1, 1.1) * viewport.height;
+      targetDepth = state.config.Z0;
     }
 
+    const windOffsetX = willHit ? state.windX * turbulence * flightTime : 0;
+    const windOffsetY = willHit ? state.windY * turbulence * flightTime : 0;
     particles.drops.push({
-      x: (screenX - viewport.cx) * state.config.Z_HIT / viewport.focal - state.windX * turbulence * flightTime,
-      y: (screenY - viewport.cy) * state.config.Z_HIT / viewport.focal - state.windY * turbulence * flightTime,
+      x: (screenX - viewport.cx) * targetDepth / viewport.focal - windOffsetX,
+      y: (screenY - viewport.cy) * targetDepth / viewport.focal - windOffsetY,
       z: state.config.Z0,
       startZ: state.config.Z0,
       velocityZ,
@@ -277,11 +279,11 @@
   }
 
   function createFarParticle(z) {
-    const angle = Math.random() * TAU;
-    const radius = viewport.halfDiagonal * randomBetween(0.05, 1.5);
+    const screenX = randomBetween(-0.1, 1.1) * viewport.width;
+    const screenY = randomBetween(-0.1, 1.1) * viewport.height;
     return {
-      x: Math.cos(angle) * radius * 5 / viewport.focal,
-      y: Math.sin(angle) * radius * 5 / viewport.focal,
+      x: (screenX - viewport.cx) * z / viewport.focal,
+      y: (screenY - viewport.cy) * z / viewport.focal,
       z,
       velocityZ: randomBetween(...state.config.FAR_VZ),
       radius: randomBetween(0.006, 0.016),
@@ -489,7 +491,10 @@
       }
       const position = particlePosition(particle);
       if (position.x < -40 || position.x > viewport.width + 40
-          || position.y < -40 || position.y > viewport.height + 40) continue;
+          || position.y < -40 || position.y > viewport.height + 40) {
+        Object.assign(particle, createFarParticle(randomBetween(18, 30)));
+        continue;
+      }
 
       const radius = Math.max(0.9, particle.radius * position.scale);
       const alpha = 0.035 * state.config.GAIN * state.config.A_FAR
