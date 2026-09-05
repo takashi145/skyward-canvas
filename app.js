@@ -11,6 +11,7 @@
     rain: Object.freeze({ amount: AMOUNT_CONTROL.base }),
     snow: Object.freeze({ amount: AMOUNT_CONTROL.base }),
   });
+  const NO_ADJUSTMENT = Object.freeze({ amount: 1 });
   const BASE = Object.freeze({
     FOV: 0.92,
     MAX_DROPS: 320,
@@ -18,6 +19,31 @@
     Z_HIT: 0.09,
   });
   const MODES = Object.freeze({
+    clear: Object.freeze({
+      Z0: 3.0,
+      VZ: [1, 1],
+      R_DROP: [0, 0],
+      HIT_RATE: [0, 0],
+      PASS_RATE: [0, 0],
+      FAR_COUNT: 0,
+      FAR_VZ: [1, 1],
+      WIND: 0,
+      WANDER: 0,
+      STREAK: 0,
+      EXPOSURE: 0.04,
+      GAIN: 0,
+      GRAIN: 0.22,
+      SOFT: 0,
+      A_BASE: 0,
+      A_CAP: 0,
+      A_FAR: 0,
+      SPLASH: false,
+      BOLT_AMP: 0,
+      BOLT_GAP: [9999, 9999],
+      SKY: { c0: [45, 93, 139], c1: [139, 177, 204], f0: [45, 93, 139], f1: [139, 177, 204] },
+      COOL: [255, 255, 255],
+      CYCLE: 0.4,
+    }),
     rain: Object.freeze({
       Z0: 3.0,
       VZ: [2.07, 4.14],
@@ -71,6 +97,7 @@
   const canvas = document.getElementById('c');
   const context = canvas.getContext('2d');
   const buttons = {
+    clear: document.getElementById('b-clear'),
     rain: document.getElementById('b-rain'),
     snow: document.getElementById('b-snow'),
   };
@@ -103,6 +130,7 @@
 
   function modeFromLocation() {
     const source = `${location.hash}${location.search}`.toLowerCase();
+    if (source.includes('clear')) return 'clear';
     if (source.includes('snow')) return 'snow';
     if (source.includes('rain')) return 'rain';
     return DEFAULT_MODE;
@@ -135,7 +163,7 @@
   }
 
   function currentAdjustment() {
-    return state.adjustments[state.mode];
+    return state.adjustments[state.mode] ?? NO_ADJUSTMENT;
   }
 
   function createLayers() {
@@ -478,12 +506,67 @@
     context.globalAlpha = 1 - exposure;
     context.drawImage(currentSky(), 0, 0, viewport.width, viewport.height);
     context.globalAlpha = 1;
+    drawClearAtmosphere();
 
     const flash = flashLevel();
     if (flash <= 0.003) return;
     context.globalAlpha = flash;
     context.drawImage(layers.flash.element, 0, 0, viewport.width, viewport.height);
     context.globalAlpha = 1;
+  }
+
+  function drawClearAtmosphere() {
+    if (state.mode !== 'clear' || state.weatherLevel <= 0) return;
+
+    const visibility = state.weatherLevel;
+    const shortSide = Math.min(viewport.width, viewport.height);
+    const sunX = viewport.width * 0.76 + Math.sin(state.time / 80) * shortSide * 0.01;
+    const sunY = viewport.height * 0.18 + Math.cos(state.time / 95) * shortSide * 0.007;
+    const pulse = 0.95 + Math.sin(state.time / 7) * 0.05;
+    const haloRadius = shortSide * 0.50 * pulse;
+
+    context.save();
+    context.globalCompositeOperation = 'screen';
+
+    const atmosphere = context.createRadialGradient(sunX, sunY, 0, sunX, sunY, haloRadius);
+    atmosphere.addColorStop(0, `rgb(255 242 200 / ${22 * visibility}%)`);
+    atmosphere.addColorStop(0.20, `rgb(255 224 175 / ${10 * visibility}%)`);
+    atmosphere.addColorStop(1, 'rgb(255 220 170 / 0%)');
+    context.fillStyle = atmosphere;
+    context.fillRect(0, 0, viewport.width, viewport.height);
+
+    const bloomRadius = Math.max(44, shortSide * 0.095) * pulse;
+    const bloom = context.createRadialGradient(sunX, sunY, 0, sunX, sunY, bloomRadius);
+    bloom.addColorStop(0, `rgb(255 253 234 / ${96 * visibility}%)`);
+    bloom.addColorStop(0.11, `rgb(255 247 215 / ${78 * visibility}%)`);
+    bloom.addColorStop(0.40, `rgb(255 230 180 / ${22 * visibility}%)`);
+    bloom.addColorStop(1, 'rgb(255 220 170 / 0%)');
+    context.fillStyle = bloom;
+    context.beginPath();
+    context.arc(sunX, sunY, bloomRadius, 0, TAU);
+    context.fill();
+
+    const flareVectorX = viewport.cx - sunX;
+    const flareVectorY = viewport.cy - sunY;
+    const flares = [
+      { position: 0.44, radius: shortSide * 0.024, alpha: 0.055 },
+      { position: 0.75, radius: shortSide * 0.045, alpha: 0.032 },
+      { position: 1.11, radius: shortSide * 0.016, alpha: 0.065 },
+    ];
+    for (const flare of flares) {
+      const x = sunX + flareVectorX * flare.position;
+      const y = sunY + flareVectorY * flare.position;
+      const gradient = context.createRadialGradient(x, y, 0, x, y, flare.radius);
+      gradient.addColorStop(0, `rgb(220 245 255 / ${flare.alpha * 100 * visibility}%)`);
+      gradient.addColorStop(0.55, `rgb(190 225 255 / ${flare.alpha * 35 * visibility}%)`);
+      gradient.addColorStop(1, 'rgb(180 220 255 / 0%)');
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.arc(x, y, flare.radius, 0, TAU);
+      context.fill();
+    }
+
+    context.restore();
   }
 
   function drawFarParticles(deltaTime) {
@@ -701,6 +784,9 @@
       button.classList.toggle('on', isSelected);
       button.setAttribute('aria-pressed', String(isSelected));
     }
+    const isAdjustable = Boolean(state.adjustments[selectedMode]);
+    settingsButton.hidden = !isAdjustable;
+    if (!isAdjustable) setSettingsOpen(false);
   }
 
   function selectedMode() {
@@ -709,6 +795,7 @@
 
   function updateAdjustmentControls(mode = selectedMode()) {
     const values = state.adjustments[mode];
+    if (!values) return;
     controls.amount.min = String(AMOUNT_CONTROL.min);
     controls.amount.max = String(AMOUNT_CONTROL.max);
     for (const name of Object.keys(controls)) {
@@ -748,7 +835,7 @@
     if (name === selectedMode()) return;
     state.transition = { target: name, phase: 'out', elapsed: 0, from: state.weatherLevel };
     updateButtons(name);
-    updateAdjustmentControls(name);
+    if (state.adjustments[name]) updateAdjustmentControls(name);
     try {
       history.replaceState(null, '', `#${name}`);
     } catch {
@@ -767,8 +854,9 @@
   }
 
   function bindEvents() {
+    const labels = { clear: '晴', rain: '雨', snow: '雪' };
     for (const [name, button] of Object.entries(buttons)) {
-      button.textContent = name === 'rain' ? '雨' : '雪';
+      button.textContent = labels[name];
       button.addEventListener('click', () => {
         setMode(name);
         showControls();
@@ -786,7 +874,7 @@
         setSettingsOpen(false);
         return;
       }
-      const modeByKey = { r: 'rain', s: 'snow' };
+      const modeByKey = { c: 'clear', r: 'rain', s: 'snow' };
       const mode = modeByKey[event.key.toLowerCase()];
       if (mode) setMode(mode);
     });
@@ -807,7 +895,7 @@
     resize();
     applyMode(state.mode);
     updateButtons(state.mode);
-    updateAdjustmentControls(state.mode);
+    if (state.adjustments[state.mode]) updateAdjustmentControls(state.mode);
     bindEvents();
     showControls();
     requestAnimationFrame(frame);

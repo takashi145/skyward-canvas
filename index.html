@@ -36,7 +36,7 @@
     }
 
     body.idle #ui,
-    body.idle #settings-panel {
+    body.idle #settings-panel.open {
       opacity: 0.16;
     }
 
@@ -69,6 +69,10 @@
     #b-settings {
       letter-spacing: 0.18em;
       text-indent: 0.18em;
+    }
+
+    #b-settings[hidden] {
+      display: none;
     }
 
     #settings-panel {
@@ -150,6 +154,7 @@
     </label>
   </section>
   <div id="ui" role="group" aria-label="天候の切り替え">
+    <button id="b-clear" type="button">晴</button>
     <button id="b-rain" type="button">雨</button>
     <button id="b-snow" type="button">雪</button>
     <button id="b-settings" type="button" aria-controls="settings-panel" aria-expanded="false" aria-label="天候を調整">•••</button>
