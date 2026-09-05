@@ -6,9 +6,10 @@
   const MAX_FRAME_TIME = 0.05;
   const TRANSITION = Object.freeze({ out: 1.4, pause: 0.35, in: 1.6, sky: 3.2 });
   const SETTINGS_KEY = 'skyward.weather-adjustments';
+  const AMOUNT_CONTROL = Object.freeze({ base: 2.5, min: 100, max: 300 });
   const DEFAULT_ADJUSTMENTS = Object.freeze({
-    rain: Object.freeze({ amount: 1 }),
-    snow: Object.freeze({ amount: 1 }),
+    rain: Object.freeze({ amount: AMOUNT_CONTROL.base }),
+    snow: Object.freeze({ amount: AMOUNT_CONTROL.base }),
   });
   const BASE = Object.freeze({
     FOV: 0.92,
@@ -111,7 +112,11 @@
     try {
       const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
       return Object.fromEntries(Object.keys(DEFAULT_ADJUSTMENTS).map(mode => [mode, {
-        amount: clamp(Number(saved?.[mode]?.amount) || 1, 0.25, 2.5),
+        amount: clamp(
+          Number(saved?.[mode]?.amount) || DEFAULT_ADJUSTMENTS[mode].amount,
+          AMOUNT_CONTROL.base * AMOUNT_CONTROL.min / 100,
+          AMOUNT_CONTROL.base * AMOUNT_CONTROL.max / 100,
+        ),
       }]));
     } catch {
       return Object.fromEntries(Object.entries(DEFAULT_ADJUSTMENTS).map(([mode, values]) => [
@@ -704,8 +709,10 @@
 
   function updateAdjustmentControls(mode = selectedMode()) {
     const values = state.adjustments[mode];
+    controls.amount.min = String(AMOUNT_CONTROL.min);
+    controls.amount.max = String(AMOUNT_CONTROL.max);
     for (const name of Object.keys(controls)) {
-      const percentage = Math.round(values[name] * 100);
+      const percentage = Math.round(values[name] / AMOUNT_CONTROL.base * 100);
       controls[name].value = String(percentage);
       controlValues[name].value = `${percentage}%`;
     }
@@ -713,7 +720,7 @@
 
   function setAdjustment(name, percentage) {
     const mode = selectedMode();
-    state.adjustments[mode][name] = percentage / 100;
+    state.adjustments[mode][name] = AMOUNT_CONTROL.base * percentage / 100;
     controlValues[name].value = `${percentage}%`;
     saveAdjustments();
 
