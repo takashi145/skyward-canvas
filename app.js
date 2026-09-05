@@ -11,6 +11,7 @@
   const STORM_KEY = 'skyward.rain-storm';
   const NIGHT_KEY = 'skyward.clear-night';
   const VOLUME_KEY = 'skyward.ambient-volume';
+  const IMPACT_KEY = 'skyward.screen-impacts';
   const STORM = Object.freeze({ boltAmplitude: 0.78, boltGap: [5, 14], windMultiplier: 1.45 });
   const AMOUNT_CONTROL = Object.freeze({ base: 2.5, min: 100, max: 300 });
   const DEFAULT_ADJUSTMENTS = Object.freeze({
@@ -119,6 +120,7 @@
     snow: document.getElementById('b-snow'),
   };
   const stormButton = document.getElementById('b-storm');
+  const impactButton = document.getElementById('b-impact');
   const nightButton = document.getElementById('b-night');
   const soundButton = document.getElementById('b-sound');
   const settingsButton = document.getElementById('b-settings');
@@ -156,6 +158,7 @@
     nightTarget: startsAtNight ? 1 : 0,
     soundEnabled: false,
     volume: loadVolumePreference(),
+    impactsEnabled: loadImpactPreference(),
   };
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -207,6 +210,22 @@
       localStorage.setItem(VOLUME_KEY, String(state.volume));
     } catch {
       // 保存できない環境でも再生は継続する。
+    }
+  }
+
+  function loadImpactPreference() {
+    try {
+      return localStorage.getItem(IMPACT_KEY) !== 'off';
+    } catch {
+      return true;
+    }
+  }
+
+  function saveImpactPreference() {
+    try {
+      localStorage.setItem(IMPACT_KEY, state.impactsEnabled ? 'on' : 'off');
+    } catch {
+      // 保存できない環境でも、そのセッション中の設定は維持する。
     }
   }
 
@@ -874,7 +893,9 @@
       const radius = drop.radius * position.scale;
 
       if (drop.z <= state.config.Z_HIT) {
-        if (!isOutsideViewport(position, 0, 60)) addImpact(position.x, position.y, radius);
+        if (state.impactsEnabled && !isOutsideViewport(position, 0, 60)) {
+          addImpact(position.x, position.y, radius);
+        }
         particles.drops.splice(index, 1);
         continue;
       }
@@ -993,9 +1014,11 @@
     settingsButton.hidden = !hasSettings;
     if (!hasSettings) setSettingsOpen(false);
     amountSetting.hidden = !isAdjustable;
+    impactButton.hidden = !isAdjustable;
     stormButton.hidden = selectedMode !== 'rain';
     nightButton.hidden = selectedMode !== 'clear';
     updateStormButton();
+    updateImpactButton();
     updateNightButton();
     updateSoundButton();
   }
@@ -1014,6 +1037,23 @@
       : state.time + randomBetween(...state.config.BOLT_GAP);
     updateStormButton();
     saveStormPreference();
+    showControls();
+  }
+
+  function updateImpactButton() {
+    impactButton.classList.toggle('on', state.impactsEnabled);
+    impactButton.setAttribute('aria-checked', String(state.impactsEnabled));
+    impactButton.setAttribute(
+      'aria-label',
+      state.impactsEnabled ? '画面への付着を無効にする' : '画面への付着を有効にする',
+    );
+  }
+
+  function toggleImpacts() {
+    state.impactsEnabled = !state.impactsEnabled;
+    if (!state.impactsEnabled) particles.splashes.length = 0;
+    updateImpactButton();
+    saveImpactPreference();
     showControls();
   }
 
@@ -1158,6 +1198,7 @@
     }
     settingsButton.addEventListener('click', toggleSettings);
     stormButton.addEventListener('click', toggleStorm);
+    impactButton.addEventListener('click', toggleImpacts);
     nightButton.addEventListener('click', toggleNight);
     soundButton.addEventListener('click', toggleSound);
     volumeControl.addEventListener('input', () => setVolume(Number(volumeControl.value)));
