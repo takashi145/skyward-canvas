@@ -142,6 +142,64 @@
       border-radius: 50%;
       background: rgb(240 246 255 / 82%);
     }
+
+    .setting-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      margin-top: 16px;
+      padding: 12px 0 2px;
+      border: 0;
+      border-top: 1px solid rgb(226 232 240 / 10%);
+      color: rgb(226 232 240 / 42%);
+      font: inherit;
+      letter-spacing: 0.14em;
+      text-align: left;
+      background: none;
+      cursor: pointer;
+      transition: color 0.3s ease;
+    }
+
+    .setting-toggle:hover,
+    .setting-toggle.on {
+      color: rgb(240 246 255 / 82%);
+    }
+
+    .setting-toggle[hidden] {
+      display: none;
+    }
+
+    .switch-track {
+      position: relative;
+      width: 28px;
+      height: 14px;
+      border: 1px solid rgb(226 232 240 / 22%);
+      border-radius: 8px;
+      transition: border-color 0.3s ease, background 0.3s ease;
+    }
+
+    .switch-track::after {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgb(226 232 240 / 48%);
+      content: "";
+      transition: transform 0.3s ease, background 0.3s ease;
+    }
+
+    .setting-toggle.on .switch-track {
+      border-color: rgb(226 232 240 / 52%);
+      background: rgb(226 232 240 / 12%);
+    }
+
+    .setting-toggle.on .switch-track::after {
+      background: rgb(240 246 255 / 92%);
+      transform: translateX(14px);
+    }
   </style>
 </head>
 <body>
@@ -152,6 +210,10 @@
       <input id="amount" type="range" min="100" max="300" step="5" value="100">
       <output id="amount-value" for="amount">100%</output>
     </label>
+    <button id="b-storm" class="setting-toggle" type="button" role="switch" aria-checked="false" hidden>
+      <span>雷雨</span>
+      <span class="switch-track" aria-hidden="true"></span>
+    </button>
   </section>
   <div id="ui" role="group" aria-label="天候の切り替え">
     <button id="b-clear" type="button">晴</button>

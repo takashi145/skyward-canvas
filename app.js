@@ -6,6 +6,8 @@
   const MAX_FRAME_TIME = 0.05;
   const TRANSITION = Object.freeze({ out: 1.4, pause: 0.35, in: 1.6, sky: 3.2 });
   const SETTINGS_KEY = 'skyward.weather-adjustments';
+  const STORM_KEY = 'skyward.rain-storm';
+  const STORM = Object.freeze({ boltAmplitude: 0.78, boltGap: [5, 14], windMultiplier: 1.45 });
   const AMOUNT_CONTROL = Object.freeze({ base: 2.5, min: 100, max: 300 });
   const DEFAULT_ADJUSTMENTS = Object.freeze({
     rain: Object.freeze({ amount: AMOUNT_CONTROL.base }),
@@ -62,7 +64,7 @@
       A_CAP: 0.52,
       A_FAR: 1.00,
       SPLASH: true,
-      BOLT_AMP: 0.35,
+      BOLT_AMP: 0,
       BOLT_GAP: [70, 180],
       SKY: { c0: [16, 21, 30], c1: [31, 41, 55], f0: [44, 55, 72], f1: [66, 80, 99] },
       COOL: [188, 212, 238],
@@ -101,6 +103,7 @@
     rain: document.getElementById('b-rain'),
     snow: document.getElementById('b-snow'),
   };
+  const stormButton = document.getElementById('b-storm');
   const settingsButton = document.getElementById('b-settings');
   const settingsPanel = document.getElementById('settings-panel');
   const controls = { amount: document.getElementById('amount') };
@@ -108,6 +111,7 @@
   const layers = createLayers();
   const particles = { drops: [], far: [], splashes: [], bolts: [] };
   const viewport = { width: 0, height: 0, cx: 0, cy: 0, focal: 0, dpr: 1 };
+  const startsStormy = loadStormPreference();
   const state = {
     mode: modeFromLocation(),
     config: null,
@@ -125,6 +129,7 @@
     previousSky: null,
     idleTimer: null,
     adjustments: loadAdjustments(),
+    storm: startsStormy,
   };
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -159,6 +164,22 @@
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.adjustments));
     } catch {
       // 保存できない環境でも、そのセッション中の調整は維持する。
+    }
+  }
+
+  function loadStormPreference() {
+    try {
+      return localStorage.getItem(STORM_KEY) === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  function saveStormPreference() {
+    try {
+      localStorage.setItem(STORM_KEY, state.storm ? 'on' : 'off');
+    } catch {
+      // 保存できない環境でも切替自体は継続する。
     }
   }
 
@@ -428,8 +449,19 @@
     state.transition.elapsed = 0;
   }
 
+  function isStormActive() {
+    return state.mode === 'rain' && state.storm;
+  }
+
+  function boltSettings() {
+    return isStormActive()
+      ? { amplitude: STORM.boltAmplitude, gap: STORM.boltGap }
+      : { amplitude: state.config.BOLT_AMP, gap: state.config.BOLT_GAP };
+  }
+
   function updateWind(intensity) {
-    const strength = 0.35 + 0.65 * intensity;
+    const stormMultiplier = isStormActive() ? STORM.windMultiplier : 1;
+    const strength = (0.35 + 0.65 * intensity) * stormMultiplier;
     state.windX = state.config.WIND * strength
       * (Math.sin(state.time / 61) * 0.75 + Math.sin(state.time / 23 + 1.1) * 0.35);
     state.windY = state.config.WIND * strength
@@ -437,11 +469,12 @@
   }
 
   function updateBolts(deltaTime) {
-    if (state.weatherLevel > 0.95 && state.config.BOLT_AMP > 0 && state.time > state.nextBolt) {
-      state.nextBolt = state.time + randomBetween(...state.config.BOLT_GAP);
+    const { amplitude, gap } = boltSettings();
+    if (state.weatherLevel > 0.95 && amplitude > 0 && state.time > state.nextBolt) {
+      state.nextBolt = state.time + randomBetween(...gap);
       particles.bolts.push({
         time: 0,
-        sequence: [[0, 0.45 * state.config.BOLT_AMP, 0.30], [0.22, state.config.BOLT_AMP, 0.70]],
+        sequence: [[0, 0.45 * amplitude, 0.30], [0.22, amplitude, 0.70]],
       });
     }
     for (let index = particles.bolts.length - 1; index >= 0; index -= 1) {
@@ -775,7 +808,7 @@
     clearWeatherParticles();
     updateDropBudget();
     seedFarParticles();
-    state.nextBolt = state.time + randomBetween(...state.config.BOLT_GAP) * 0.5;
+    state.nextBolt = state.time + randomBetween(...boltSettings().gap) * 0.5;
   }
 
   function updateButtons(selectedMode) {
@@ -787,6 +820,25 @@
     const isAdjustable = Boolean(state.adjustments[selectedMode]);
     settingsButton.hidden = !isAdjustable;
     if (!isAdjustable) setSettingsOpen(false);
+    stormButton.hidden = selectedMode !== 'rain';
+    updateStormButton();
+  }
+
+  function updateStormButton() {
+    stormButton.classList.toggle('on', state.storm);
+    stormButton.setAttribute('aria-checked', String(state.storm));
+    stormButton.setAttribute('aria-label', state.storm ? '雷雨を解除' : '雷雨に切り替え');
+  }
+
+  function toggleStorm() {
+    state.storm = !state.storm;
+    particles.bolts.length = 0;
+    state.nextBolt = state.storm
+      ? state.time + randomBetween(1, 3)
+      : state.time + randomBetween(...state.config.BOLT_GAP);
+    updateStormButton();
+    saveStormPreference();
+    showControls();
   }
 
   function selectedMode() {
@@ -863,6 +915,7 @@
       });
     }
     settingsButton.addEventListener('click', toggleSettings);
+    stormButton.addEventListener('click', toggleStorm);
     for (const [name, control] of Object.entries(controls)) {
       control.addEventListener('input', () => {
         setAdjustment(name, Number(control.value));
@@ -872,6 +925,10 @@
     addEventListener('keydown', event => {
       if (event.key === 'Escape') {
         setSettingsOpen(false);
+        return;
+      }
+      if (event.key.toLowerCase() === 't' && selectedMode() === 'rain') {
+        toggleStorm();
         return;
       }
       const modeByKey = { c: 'clear', r: 'rain', s: 'snow' };
