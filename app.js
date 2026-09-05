@@ -10,6 +10,7 @@
   const SETTINGS_KEY = 'skyward.weather-adjustments';
   const STORM_KEY = 'skyward.rain-storm';
   const NIGHT_KEY = 'skyward.clear-night';
+  const VOLUME_KEY = 'skyward.ambient-volume';
   const STORM = Object.freeze({ boltAmplitude: 0.78, boltGap: [5, 14], windMultiplier: 1.45 });
   const AMOUNT_CONTROL = Object.freeze({ base: 2.5, min: 100, max: 300 });
   const DEFAULT_ADJUSTMENTS = Object.freeze({
@@ -119,16 +120,20 @@
   };
   const stormButton = document.getElementById('b-storm');
   const nightButton = document.getElementById('b-night');
+  const soundButton = document.getElementById('b-sound');
   const settingsButton = document.getElementById('b-settings');
   const settingsPanel = document.getElementById('settings-panel');
   const amountSetting = document.getElementById('amount-setting');
   const controls = { amount: document.getElementById('amount') };
   const controlValues = { amount: document.getElementById('amount-value') };
+  const volumeControl = document.getElementById('volume');
+  const volumeValue = document.getElementById('volume-value');
   const layers = createLayers();
   const particles = { drops: [], far: [], splashes: [], bolts: [] };
   const viewport = { width: 0, height: 0, cx: 0, cy: 0, focal: 0, dpr: 1 };
   const startsStormy = loadStormPreference();
   const startsAtNight = loadNightPreference();
+  let ambientAudio = null;
   const state = {
     mode: modeFromLocation(),
     config: null,
@@ -149,6 +154,8 @@
     storm: startsStormy,
     nightLevel: startsAtNight ? 1 : 0,
     nightTarget: startsAtNight ? 1 : 0,
+    soundEnabled: false,
+    volume: loadVolumePreference(),
   };
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -184,6 +191,65 @@
     } catch {
       // 保存できない環境でも、そのセッション中の調整は維持する。
     }
+  }
+
+  function loadVolumePreference() {
+    try {
+      const saved = Number(localStorage.getItem(VOLUME_KEY));
+      return Number.isFinite(saved) && saved >= 0 && saved <= 1 ? saved : 0.35;
+    } catch {
+      return 0.35;
+    }
+  }
+
+  function saveVolumePreference() {
+    try {
+      localStorage.setItem(VOLUME_KEY, String(state.volume));
+    } catch {
+      // 保存できない環境でも再生は継続する。
+    }
+  }
+
+  function createAmbientAudio() {
+    return window.SkywardAudio?.create() ?? null;
+  }
+
+  function updateAmbientAudio(force = false) {
+    ambientAudio?.update({
+      enabled: state.soundEnabled,
+      volume: state.volume,
+      mode: state.mode,
+      weatherLevel: state.weatherLevel,
+      nightLevel: state.nightLevel,
+      nightTarget: state.nightTarget,
+      time: state.time,
+    }, force);
+  }
+
+  function disableAmbientAudio(error) {
+    console.warn('環境音を停止しました。', error);
+    state.soundEnabled = false;
+    const failedAudio = ambientAudio;
+    ambientAudio = null;
+    try {
+      const closing = failedAudio?.close?.();
+      if (closing && typeof closing.catch === 'function') closing.catch(() => {});
+    } catch {
+      // 音声エンジンの破棄に失敗しても描画は継続する。
+    }
+    updateSoundButton();
+  }
+
+  function safelyUpdateAmbientAudio(force = false) {
+    try {
+      updateAmbientAudio(force);
+    } catch (error) {
+      disableAmbientAudio(error);
+    }
+  }
+
+  function stopDaySounds() {
+    ambientAudio?.stopDaySounds();
   }
 
   function loadStormPreference() {
@@ -553,6 +619,7 @@
     updateWind(intensity);
     updateBolts(deltaTime);
     emitParticles(deltaTime, intensity);
+    safelyUpdateAmbientAudio();
   }
 
   function updateNight(deltaTime) {
@@ -884,11 +951,11 @@
   }
 
   function frame(now) {
+    requestAnimationFrame(frame);
     const deltaTime = Math.min((now - state.lastFrame) / 1000, MAX_FRAME_TIME);
     state.lastFrame = now;
     update(deltaTime);
     render(deltaTime);
-    requestAnimationFrame(frame);
   }
 
   function clearWeatherParticles() {
@@ -930,6 +997,7 @@
     nightButton.hidden = selectedMode !== 'clear';
     updateStormButton();
     updateNightButton();
+    updateSoundButton();
   }
 
   function updateStormButton() {
@@ -958,8 +1026,60 @@
 
   function toggleNight() {
     state.nightTarget = state.nightTarget ? 0 : 1;
+    if (state.nightTarget === 1) stopDaySounds();
     updateNightButton();
     saveNightPreference();
+    showControls();
+  }
+
+  function updateSoundButton() {
+    soundButton.classList.toggle('on', state.soundEnabled);
+    soundButton.setAttribute('aria-checked', String(state.soundEnabled));
+    soundButton.setAttribute('aria-label', state.soundEnabled ? '環境音を停止' : '環境音を再生');
+    volumeControl.disabled = !state.soundEnabled;
+    const percentage = Math.round(state.volume * 100);
+    volumeControl.value = String(percentage);
+    volumeValue.value = `${percentage}%`;
+  }
+
+  function toggleSound() {
+    const shouldEnable = !state.soundEnabled;
+    state.soundEnabled = shouldEnable;
+    updateSoundButton();
+    showControls();
+
+    if (!shouldEnable) {
+      stopDaySounds();
+      safelyUpdateAmbientAudio(true);
+      return;
+    }
+
+    try {
+      if (!ambientAudio) ambientAudio = createAmbientAudio();
+      if (!ambientAudio) {
+        state.soundEnabled = false;
+        updateSoundButton();
+        soundButton.setAttribute('aria-label', 'このブラウザでは環境音を再生できません');
+        return;
+      }
+      ambientAudio.resetSchedule();
+      safelyUpdateAmbientAudio(true);
+      if (!ambientAudio) return;
+      if (ambientAudio.state === 'suspended') {
+        ambientAudio.resume()
+          .then(() => safelyUpdateAmbientAudio(true))
+          .catch(disableAmbientAudio);
+      }
+    } catch (error) {
+      disableAmbientAudio(error);
+    }
+  }
+
+  function setVolume(percentage) {
+    state.volume = clamp(percentage / 100, 0, 1);
+    volumeValue.value = `${Math.round(state.volume * 100)}%`;
+    saveVolumePreference();
+    safelyUpdateAmbientAudio(true);
     showControls();
   }
 
@@ -1039,6 +1159,8 @@
     settingsButton.addEventListener('click', toggleSettings);
     stormButton.addEventListener('click', toggleStorm);
     nightButton.addEventListener('click', toggleNight);
+    soundButton.addEventListener('click', toggleSound);
+    volumeControl.addEventListener('input', () => setVolume(Number(volumeControl.value)));
     for (const [name, control] of Object.entries(controls)) {
       control.addEventListener('input', () => {
         setAdjustment(name, Number(control.value));

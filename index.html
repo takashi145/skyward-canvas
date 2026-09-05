@@ -147,6 +147,11 @@
       background: rgb(240 246 255 / 82%);
     }
 
+    .setting input:disabled {
+      cursor: default;
+      opacity: 0.32;
+    }
+
     .setting-toggle {
       display: flex;
       align-items: center;
@@ -178,6 +183,10 @@
       margin-top: 0;
       padding-top: 2px;
       border-top: 0;
+    }
+
+    #volume-setting {
+      margin-top: 15px;
     }
 
     .switch-track {
@@ -228,6 +237,15 @@
       <span>夜</span>
       <span class="switch-track" aria-hidden="true"></span>
     </button>
+    <button id="b-sound" class="setting-toggle" type="button" role="switch" aria-checked="false">
+      <span>環境音</span>
+      <span class="switch-track" aria-hidden="true"></span>
+    </button>
+    <label id="volume-setting" class="setting">
+      <span>音量</span>
+      <input id="volume" type="range" min="0" max="100" step="1" value="35" disabled>
+      <output id="volume-value" for="volume">35%</output>
+    </label>
   </section>
   <div id="ui" role="group" aria-label="天候の切り替え">
     <button id="b-clear" type="button">晴</button>
@@ -235,6 +253,7 @@
     <button id="b-snow" type="button">雪</button>
     <button id="b-settings" type="button" aria-controls="settings-panel" aria-expanded="false" aria-label="天候を調整">•••</button>
   </div>
+  <script src="audio.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
