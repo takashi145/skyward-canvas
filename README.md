@@ -1,4 +1,4 @@
-# SKYWARD.
+# SKYWARD CANVAS
 
 寝そべったまま、ただ空を見上げるためのWeb作品。
 
