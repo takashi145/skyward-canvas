@@ -1045,23 +1045,6 @@
         showControls();
       });
     }
-    addEventListener('keydown', event => {
-      if (event.key === 'Escape') {
-        setSettingsOpen(false);
-        return;
-      }
-      if (event.key.toLowerCase() === 't' && selectedMode() === 'rain') {
-        toggleStorm();
-        return;
-      }
-      if (event.key.toLowerCase() === 'n' && selectedMode() === 'clear') {
-        toggleNight();
-        return;
-      }
-      const modeByKey = { c: 'clear', r: 'rain', s: 'snow' };
-      const mode = modeByKey[event.key.toLowerCase()];
-      if (mode) setMode(mode);
-    });
     addEventListener('pointermove', showControls, { passive: true });
     addEventListener('pointerdown', event => {
       showControls();
