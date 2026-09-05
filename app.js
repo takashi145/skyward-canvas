@@ -5,8 +5,11 @@
   const TAU = Math.PI * 2;
   const MAX_FRAME_TIME = 0.05;
   const TRANSITION = Object.freeze({ out: 1.4, pause: 0.35, in: 1.6, sky: 3.2 });
+  const DAY_NIGHT_DURATION = 2.8;
+  const STAR_ROTATION_SPEED = TAU / (12 * 60);
   const SETTINGS_KEY = 'skyward.weather-adjustments';
   const STORM_KEY = 'skyward.rain-storm';
+  const NIGHT_KEY = 'skyward.clear-night';
   const STORM = Object.freeze({ boltAmplitude: 0.78, boltGap: [5, 14], windMultiplier: 1.45 });
   const AMOUNT_CONTROL = Object.freeze({ base: 2.5, min: 100, max: 300 });
   const DEFAULT_ADJUSTMENTS = Object.freeze({
@@ -95,6 +98,17 @@
       CYCLE: 0.55,
     }),
   });
+  const STARS = Array.from({ length: 180 }, () => ({
+    angle: Math.random() * TAU,
+    distance: Math.sqrt(Math.random()),
+    radius: randomBetween(0.35, 1.25),
+    phase: Math.random() * TAU,
+    speed: randomBetween(0.35, 0.85),
+  }));
+  const SHOOTING_STARS = Object.freeze([
+    { period: 19, offset: 0, x: 0.12, y: 0.14, dx: 0.16, dy: 0.10, duration: 0.9 },
+    { period: 31, offset: 11, x: 0.58, y: 0.09, dx: 0.13, dy: 0.08, duration: 0.75 },
+  ]);
 
   const canvas = document.getElementById('c');
   const context = canvas.getContext('2d');
@@ -104,14 +118,17 @@
     snow: document.getElementById('b-snow'),
   };
   const stormButton = document.getElementById('b-storm');
+  const nightButton = document.getElementById('b-night');
   const settingsButton = document.getElementById('b-settings');
   const settingsPanel = document.getElementById('settings-panel');
+  const amountSetting = document.getElementById('amount-setting');
   const controls = { amount: document.getElementById('amount') };
   const controlValues = { amount: document.getElementById('amount-value') };
   const layers = createLayers();
   const particles = { drops: [], far: [], splashes: [], bolts: [] };
   const viewport = { width: 0, height: 0, cx: 0, cy: 0, focal: 0, dpr: 1 };
   const startsStormy = loadStormPreference();
+  const startsAtNight = loadNightPreference();
   const state = {
     mode: modeFromLocation(),
     config: null,
@@ -130,6 +147,8 @@
     idleTimer: null,
     adjustments: loadAdjustments(),
     storm: startsStormy,
+    nightLevel: startsAtNight ? 1 : 0,
+    nightTarget: startsAtNight ? 1 : 0,
   };
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -178,6 +197,22 @@
   function saveStormPreference() {
     try {
       localStorage.setItem(STORM_KEY, state.storm ? 'on' : 'off');
+    } catch {
+      // 保存できない環境でも切替自体は継続する。
+    }
+  }
+
+  function loadNightPreference() {
+    try {
+      return localStorage.getItem(NIGHT_KEY) === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  function saveNightPreference() {
+    try {
+      localStorage.setItem(NIGHT_KEY, state.nightTarget ? 'on' : 'off');
     } catch {
       // 保存できない環境でも切替自体は継続する。
     }
@@ -513,10 +548,18 @@
   function update(deltaTime) {
     state.time += deltaTime;
     updateTransition(deltaTime);
+    updateNight(deltaTime);
     const intensity = weatherIntensity();
     updateWind(intensity);
     updateBolts(deltaTime);
     emitParticles(deltaTime, intensity);
+  }
+
+  function updateNight(deltaTime) {
+    const difference = state.nightTarget - state.nightLevel;
+    if (difference === 0) return;
+    const step = Math.min(Math.abs(difference), deltaTime / DAY_NIGHT_DURATION);
+    state.nightLevel += Math.sign(difference) * step;
   }
 
   function currentSky() {
@@ -539,6 +582,7 @@
     context.globalAlpha = 1 - exposure;
     context.drawImage(currentSky(), 0, 0, viewport.width, viewport.height);
     context.globalAlpha = 1;
+    drawNightAtmosphere();
     drawClearAtmosphere();
 
     const flash = flashLevel();
@@ -551,7 +595,8 @@
   function drawClearAtmosphere() {
     if (state.mode !== 'clear' || state.weatherLevel <= 0) return;
 
-    const visibility = state.weatherLevel;
+    const visibility = state.weatherLevel * (1 - state.nightLevel);
+    if (visibility <= 0.001) return;
     const shortSide = Math.min(viewport.width, viewport.height);
     const sunX = viewport.width * 0.76 + Math.sin(state.time / 80) * shortSide * 0.01;
     const sunY = viewport.height * 0.18 + Math.cos(state.time / 95) * shortSide * 0.007;
@@ -600,6 +645,65 @@
     }
 
     context.restore();
+  }
+
+  function drawNightAtmosphere() {
+    if (state.mode !== 'clear' || state.nightLevel <= 0.001 || state.weatherLevel <= 0) return;
+
+    const visibility = state.weatherLevel * state.nightLevel;
+    const shortSide = Math.min(viewport.width, viewport.height);
+    context.save();
+    context.globalCompositeOperation = 'source-over';
+
+    const nightSky = context.createLinearGradient(0, 0, 0, viewport.height);
+    nightSky.addColorStop(0, `rgb(5 10 24 / ${98 * visibility}%)`);
+    nightSky.addColorStop(0.55, `rgb(9 16 32 / ${97 * visibility}%)`);
+    nightSky.addColorStop(1, `rgb(7 13 28 / ${98 * visibility}%)`);
+    context.fillStyle = nightSky;
+    context.fillRect(0, 0, viewport.width, viewport.height);
+
+    context.globalCompositeOperation = 'screen';
+    const skyRadius = Math.hypot(viewport.width, viewport.height) / 2;
+    const rotation = state.time * STAR_ROTATION_SPEED;
+    for (const star of STARS) {
+      const twinkle = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(state.time * star.speed + star.phase));
+      const angle = star.angle + rotation;
+      const distance = star.distance * skyRadius;
+      const x = viewport.cx + Math.cos(angle) * distance;
+      const y = viewport.cy + Math.sin(angle) * distance;
+      if (x < -2 || x > viewport.width + 2 || y < -2 || y > viewport.height + 2) continue;
+      context.fillStyle = `rgb(224 236 255 / ${twinkle * 72 * visibility}%)`;
+      context.beginPath();
+      context.arc(x, y, star.radius, 0, TAU);
+      context.fill();
+    }
+
+    drawShootingStars(visibility, shortSide);
+    context.restore();
+  }
+
+  function drawShootingStars(visibility, shortSide) {
+    for (const meteor of SHOOTING_STARS) {
+      const age = (state.time + meteor.offset) % meteor.period;
+      if (age > meteor.duration) continue;
+      const progress = age / meteor.duration;
+      const alpha = Math.sin(progress * Math.PI) * visibility;
+      const headX = (meteor.x + meteor.dx * progress) * viewport.width;
+      const headY = (meteor.y + meteor.dy * progress) * viewport.height;
+      const length = shortSide * 0.085;
+      const angle = Math.atan2(meteor.dy * viewport.height, meteor.dx * viewport.width);
+      const tailX = headX - Math.cos(angle) * length;
+      const tailY = headY - Math.sin(angle) * length;
+      const trail = context.createLinearGradient(tailX, tailY, headX, headY);
+      trail.addColorStop(0, 'rgb(210 230 255 / 0%)');
+      trail.addColorStop(1, `rgb(235 245 255 / ${68 * alpha}%)`);
+      context.strokeStyle = trail;
+      context.lineWidth = 1.1;
+      context.beginPath();
+      context.moveTo(tailX, tailY);
+      context.lineTo(headX, headY);
+      context.stroke();
+    }
   }
 
   function drawFarParticles(deltaTime) {
@@ -818,10 +922,14 @@
       button.setAttribute('aria-pressed', String(isSelected));
     }
     const isAdjustable = Boolean(state.adjustments[selectedMode]);
-    settingsButton.hidden = !isAdjustable;
-    if (!isAdjustable) setSettingsOpen(false);
+    const hasSettings = isAdjustable || selectedMode === 'clear';
+    settingsButton.hidden = !hasSettings;
+    if (!hasSettings) setSettingsOpen(false);
+    amountSetting.hidden = !isAdjustable;
     stormButton.hidden = selectedMode !== 'rain';
+    nightButton.hidden = selectedMode !== 'clear';
     updateStormButton();
+    updateNightButton();
   }
 
   function updateStormButton() {
@@ -838,6 +946,20 @@
       : state.time + randomBetween(...state.config.BOLT_GAP);
     updateStormButton();
     saveStormPreference();
+    showControls();
+  }
+
+  function updateNightButton() {
+    const isNight = state.nightTarget === 1;
+    nightButton.classList.toggle('on', isNight);
+    nightButton.setAttribute('aria-checked', String(isNight));
+    nightButton.setAttribute('aria-label', isNight ? '昼に切り替え' : '夜に切り替え');
+  }
+
+  function toggleNight() {
+    state.nightTarget = state.nightTarget ? 0 : 1;
+    updateNightButton();
+    saveNightPreference();
     showControls();
   }
 
@@ -916,6 +1038,7 @@
     }
     settingsButton.addEventListener('click', toggleSettings);
     stormButton.addEventListener('click', toggleStorm);
+    nightButton.addEventListener('click', toggleNight);
     for (const [name, control] of Object.entries(controls)) {
       control.addEventListener('input', () => {
         setAdjustment(name, Number(control.value));
@@ -929,6 +1052,10 @@
       }
       if (event.key.toLowerCase() === 't' && selectedMode() === 'rain') {
         toggleStorm();
+        return;
+      }
+      if (event.key.toLowerCase() === 'n' && selectedMode() === 'clear') {
+        toggleNight();
         return;
       }
       const modeByKey = { c: 'clear', r: 'rain', s: 'snow' };

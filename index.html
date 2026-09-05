@@ -107,6 +107,10 @@
       align-items: center;
     }
 
+    .setting[hidden] {
+      display: none;
+    }
+
     .setting + .setting {
       margin-top: 15px;
     }
@@ -170,6 +174,12 @@
       display: none;
     }
 
+    #b-night {
+      margin-top: 0;
+      padding-top: 2px;
+      border-top: 0;
+    }
+
     .switch-track {
       position: relative;
       width: 28px;
@@ -204,14 +214,18 @@
 </head>
 <body>
   <canvas id="c" aria-hidden="true"></canvas>
-  <section id="settings-panel" aria-label="天候の調整" aria-hidden="true">
-    <label class="setting">
+  <section id="settings-panel" aria-label="モードの調整" aria-hidden="true">
+    <label id="amount-setting" class="setting">
       <span>量</span>
       <input id="amount" type="range" min="100" max="300" step="5" value="100">
       <output id="amount-value" for="amount">100%</output>
     </label>
     <button id="b-storm" class="setting-toggle" type="button" role="switch" aria-checked="false" hidden>
       <span>雷雨</span>
+      <span class="switch-track" aria-hidden="true"></span>
+    </button>
+    <button id="b-night" class="setting-toggle" type="button" role="switch" aria-checked="false" hidden>
+      <span>夜</span>
       <span class="switch-track" aria-hidden="true"></span>
     </button>
   </section>
