@@ -35,7 +35,8 @@
       transition: opacity 0.9s ease;
     }
 
-    body.idle #ui {
+    body.idle #ui,
+    body.idle #settings-panel {
       opacity: 0.16;
     }
 
@@ -64,13 +65,94 @@
       outline: 1px solid rgb(226 232 240 / 50%);
       outline-offset: 4px;
     }
+
+    #b-settings {
+      letter-spacing: 0.18em;
+      text-indent: 0.18em;
+    }
+
+    #settings-panel {
+      position: fixed;
+      bottom: 9vh;
+      left: 50%;
+      width: min(280px, calc(100vw - 48px));
+      padding: 18px 20px 16px;
+      color: rgb(226 232 240 / 62%);
+      font: 400 11px/1 "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+      letter-spacing: 0.18em;
+      background: rgb(10 13 20 / 58%);
+      border: 1px solid rgb(226 232 240 / 8%);
+      border-radius: 2px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 8px);
+      backdrop-filter: blur(12px);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    #settings-panel.open {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, 0);
+    }
+
+    .setting {
+      display: grid;
+      grid-template-columns: 4em 1fr 4em;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .setting + .setting {
+      margin-top: 15px;
+    }
+
+    .setting output {
+      color: rgb(226 232 240 / 46%);
+      text-align: right;
+      letter-spacing: 0.04em;
+    }
+
+    .setting input {
+      width: 100%;
+      height: 1px;
+      margin: 0;
+      background: rgb(226 232 240 / 20%);
+      cursor: pointer;
+      appearance: none;
+    }
+
+    .setting input::-webkit-slider-thumb {
+      width: 9px;
+      height: 9px;
+      border: 0;
+      border-radius: 50%;
+      background: rgb(240 246 255 / 82%);
+      appearance: none;
+    }
+
+    .setting input::-moz-range-thumb {
+      width: 9px;
+      height: 9px;
+      border: 0;
+      border-radius: 50%;
+      background: rgb(240 246 255 / 82%);
+    }
   </style>
 </head>
 <body>
   <canvas id="c" aria-hidden="true"></canvas>
+  <section id="settings-panel" aria-label="天候の調整" aria-hidden="true">
+    <label class="setting">
+      <span>量</span>
+      <input id="amount" type="range" min="25" max="250" step="5" value="100">
+      <output id="amount-value" for="amount">100%</output>
+    </label>
+  </section>
   <div id="ui" role="group" aria-label="天候の切り替え">
     <button id="b-rain" type="button">雨</button>
     <button id="b-snow" type="button">雪</button>
+    <button id="b-settings" type="button" aria-controls="settings-panel" aria-expanded="false" aria-label="天候を調整">•••</button>
   </div>
   <script src="app.js"></script>
 </body>

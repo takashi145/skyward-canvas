@@ -5,6 +5,11 @@
   const TAU = Math.PI * 2;
   const MAX_FRAME_TIME = 0.05;
   const TRANSITION = Object.freeze({ out: 1.4, pause: 0.35, in: 1.6, sky: 3.2 });
+  const SETTINGS_KEY = 'skyward.weather-adjustments';
+  const DEFAULT_ADJUSTMENTS = Object.freeze({
+    rain: Object.freeze({ amount: 1 }),
+    snow: Object.freeze({ amount: 1 }),
+  });
   const BASE = Object.freeze({
     FOV: 0.92,
     MAX_DROPS: 320,
@@ -68,6 +73,10 @@
     rain: document.getElementById('b-rain'),
     snow: document.getElementById('b-snow'),
   };
+  const settingsButton = document.getElementById('b-settings');
+  const settingsPanel = document.getElementById('settings-panel');
+  const controls = { amount: document.getElementById('amount') };
+  const controlValues = { amount: document.getElementById('amount-value') };
   const layers = createLayers();
   const particles = { drops: [], far: [], splashes: [], bolts: [] };
   const viewport = { width: 0, height: 0, cx: 0, cy: 0, focal: 0, halfDiagonal: 1, dpr: 1 };
@@ -87,6 +96,7 @@
     skyBlend: 1,
     previousSky: null,
     idleTimer: null,
+    adjustments: loadAdjustments(),
   };
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -95,6 +105,32 @@
     if (source.includes('snow')) return 'snow';
     if (source.includes('rain')) return 'rain';
     return DEFAULT_MODE;
+  }
+
+  function loadAdjustments() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+      return Object.fromEntries(Object.keys(DEFAULT_ADJUSTMENTS).map(mode => [mode, {
+        amount: clamp(Number(saved?.[mode]?.amount) || 1, 0.25, 2.5),
+      }]));
+    } catch {
+      return Object.fromEntries(Object.entries(DEFAULT_ADJUSTMENTS).map(([mode, values]) => [
+        mode,
+        { ...values },
+      ]));
+    }
+  }
+
+  function saveAdjustments() {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.adjustments));
+    } catch {
+      // 保存できない環境でも、そのセッション中の調整は維持する。
+    }
+  }
+
+  function currentAdjustment() {
+    return state.adjustments[state.mode];
   }
 
   function createLayers() {
@@ -190,7 +226,12 @@
     }
     repaintSkies();
     seedFarParticles();
-    state.dropBudget = viewport.width * viewport.height > 900000 ? state.config.MAX_DROPS : 220;
+    updateDropBudget();
+  }
+
+  function updateDropBudget() {
+    const baseBudget = viewport.width * viewport.height > 900000 ? state.config.MAX_DROPS : 220;
+    state.dropBudget = Math.max(1, Math.round(baseBudget * currentAdjustment().amount));
   }
 
   function createWander() {
@@ -251,7 +292,13 @@
 
   function seedFarParticles() {
     particles.far.length = 0;
-    for (let index = 0; index < state.config.FAR_COUNT; index += 1) {
+    syncFarParticleCount();
+  }
+
+  function syncFarParticleCount() {
+    const targetCount = Math.round(state.config.FAR_COUNT * currentAdjustment().amount);
+    if (particles.far.length > targetCount) particles.far.length = targetCount;
+    for (let index = particles.far.length; index < targetCount; index += 1) {
       particles.far.push(createFarParticle(randomBetween(5, 26)));
     }
   }
@@ -381,9 +428,10 @@
 
   function emitParticles(deltaTime, intensity) {
     const motionFactor = reducedMotion ? 0.4 : 1;
+    const amount = currentAdjustment().amount;
     const rateAt = ([minimum, maximum]) => interpolate(minimum, maximum, intensity);
-    state.hitAccumulator += deltaTime * state.weatherLevel * rateAt(state.config.HIT_RATE) * motionFactor;
-    state.passAccumulator += deltaTime * state.weatherLevel * rateAt(state.config.PASS_RATE) * motionFactor;
+    state.hitAccumulator += deltaTime * state.weatherLevel * rateAt(state.config.HIT_RATE) * motionFactor * amount;
+    state.passAccumulator += deltaTime * state.weatherLevel * rateAt(state.config.PASS_RATE) * motionFactor * amount;
     while (state.hitAccumulator >= 1) {
       state.hitAccumulator -= 1;
       spawnDrop(true);
@@ -632,6 +680,7 @@
     state.config = { ...BASE, ...MODES[name] };
     repaintSkies();
     clearWeatherParticles();
+    updateDropBudget();
     seedFarParticles();
     state.nextBolt = state.time + randomBetween(...state.config.BOLT_GAP) * 0.5;
   }
@@ -644,12 +693,50 @@
     }
   }
 
+  function selectedMode() {
+    return state.transition ? state.transition.target : state.mode;
+  }
+
+  function updateAdjustmentControls(mode = selectedMode()) {
+    const values = state.adjustments[mode];
+    for (const name of Object.keys(controls)) {
+      const percentage = Math.round(values[name] * 100);
+      controls[name].value = String(percentage);
+      controlValues[name].value = `${percentage}%`;
+    }
+  }
+
+  function setAdjustment(name, percentage) {
+    const mode = selectedMode();
+    state.adjustments[mode][name] = percentage / 100;
+    controlValues[name].value = `${percentage}%`;
+    saveAdjustments();
+
+    if (mode === state.mode && name === 'amount') {
+      updateDropBudget();
+      syncFarParticleCount();
+    }
+  }
+
+  function setSettingsOpen(isOpen) {
+    settingsPanel.classList.toggle('open', isOpen);
+    settingsPanel.setAttribute('aria-hidden', String(!isOpen));
+    settingsButton.setAttribute('aria-expanded', String(isOpen));
+  }
+
+  function toggleSettings() {
+    const isOpen = settingsButton.getAttribute('aria-expanded') !== 'true';
+    setSettingsOpen(isOpen);
+    if (isOpen) updateAdjustmentControls();
+    showControls();
+  }
+
   function setMode(name) {
     if (!MODES[name]) return;
-    const selectedMode = state.transition ? state.transition.target : state.mode;
-    if (name === selectedMode) return;
+    if (name === selectedMode()) return;
     state.transition = { target: name, phase: 'out', elapsed: 0, from: state.weatherLevel };
     updateButtons(name);
+    updateAdjustmentControls(name);
     try {
       history.replaceState(null, '', `#${name}`);
     } catch {
@@ -660,7 +747,11 @@
   function showControls() {
     document.body.classList.remove('idle');
     clearTimeout(state.idleTimer);
-    state.idleTimer = setTimeout(() => document.body.classList.add('idle'), 2600);
+    const delay = settingsButton.getAttribute('aria-expanded') === 'true' ? 6000 : 2600;
+    state.idleTimer = setTimeout(() => {
+      document.body.classList.add('idle');
+      setSettingsOpen(false);
+    }, delay);
   }
 
   function bindEvents() {
@@ -671,13 +762,31 @@
         showControls();
       });
     }
+    settingsButton.addEventListener('click', toggleSettings);
+    for (const [name, control] of Object.entries(controls)) {
+      control.addEventListener('input', () => {
+        setAdjustment(name, Number(control.value));
+        showControls();
+      });
+    }
     addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        setSettingsOpen(false);
+        return;
+      }
       const modeByKey = { r: 'rain', s: 'snow' };
       const mode = modeByKey[event.key.toLowerCase()];
       if (mode) setMode(mode);
     });
     addEventListener('pointermove', showControls, { passive: true });
-    addEventListener('pointerdown', showControls, { passive: true });
+    addEventListener('pointerdown', event => {
+      showControls();
+      if (settingsButton.getAttribute('aria-expanded') === 'true'
+          && !settingsPanel.contains(event.target)
+          && !settingsButton.contains(event.target)) {
+        setSettingsOpen(false);
+      }
+    }, { passive: true });
     addEventListener('resize', resize);
   }
 
@@ -686,6 +795,7 @@
     resize();
     applyMode(state.mode);
     updateButtons(state.mode);
+    updateAdjustmentControls(state.mode);
     bindEvents();
     showControls();
     requestAnimationFrame(frame);
