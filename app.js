@@ -4,7 +4,7 @@
   const DEFAULT_MODE = 'rain';
   const TAU = Math.PI * 2;
   const MAX_FRAME_TIME = 0.05;
-  const TRANSITION = Object.freeze({ out: 1.4, pause: 0.35, in: 1.6, sky: 3.2 });
+  const TRANSITION = Object.freeze({ out: 0.4, pause: 0.05, in: 0.7, sky: 1.15 });
   const DAY_NIGHT_DURATION = 2.8;
   const STAR_ROTATION_SPEED = TAU / (12 * 60);
   const SETTINGS_KEY = 'skyward.weather-adjustments';
@@ -654,6 +654,7 @@
     mixed.clearRect(0, 0, viewport.width, viewport.height);
     mixed.globalAlpha = 1;
     mixed.drawImage(layers.previousSky.element, 0, 0, viewport.width, viewport.height);
+    drawNightAtmosphere(mixed, state.previousSky.NIGHT);
     mixed.globalAlpha = state.skyBlend;
     mixed.drawImage(layers.sky.element, 0, 0, viewport.width, viewport.height);
     mixed.globalAlpha = 1;
@@ -668,7 +669,7 @@
     context.globalAlpha = 1 - exposure;
     context.drawImage(currentSky(), 0, 0, viewport.width, viewport.height);
     context.globalAlpha = 1;
-    drawNightAtmosphere();
+    drawNightAtmosphere(context, nightVisibility());
     drawClearAtmosphere();
 
     const flash = flashLevel();
@@ -733,22 +734,28 @@
     context.restore();
   }
 
-  function drawNightAtmosphere() {
-    if (state.mode !== 'clear' || state.nightLevel <= 0.001 || state.weatherLevel <= 0) return;
+  function nightVisibility() {
+    const active = state.transition;
+    if (state.mode !== 'clear') return 0;
+    if (active && active.phase !== 'in' && active.sourceNight > 0) return active.sourceNight;
+    return state.mode === 'clear' ? state.weatherLevel * state.nightLevel : 0;
+  }
 
-    const visibility = state.weatherLevel * state.nightLevel;
+  function drawNightAtmosphere(targetContext, visibility) {
+    if (visibility <= 0.001) return;
+
     const shortSide = Math.min(viewport.width, viewport.height);
-    context.save();
-    context.globalCompositeOperation = 'source-over';
+    targetContext.save();
+    targetContext.globalCompositeOperation = 'source-over';
 
-    const nightSky = context.createLinearGradient(0, 0, 0, viewport.height);
+    const nightSky = targetContext.createLinearGradient(0, 0, 0, viewport.height);
     nightSky.addColorStop(0, `rgb(5 10 24 / ${98 * visibility}%)`);
     nightSky.addColorStop(0.55, `rgb(9 16 32 / ${97 * visibility}%)`);
     nightSky.addColorStop(1, `rgb(7 13 28 / ${98 * visibility}%)`);
-    context.fillStyle = nightSky;
-    context.fillRect(0, 0, viewport.width, viewport.height);
+    targetContext.fillStyle = nightSky;
+    targetContext.fillRect(0, 0, viewport.width, viewport.height);
 
-    context.globalCompositeOperation = 'screen';
+    targetContext.globalCompositeOperation = 'screen';
     const skyRadius = Math.hypot(viewport.width, viewport.height) / 2;
     const rotation = state.time * STAR_ROTATION_SPEED;
     for (const star of STARS) {
@@ -758,17 +765,17 @@
       const x = viewport.cx + Math.cos(angle) * distance;
       const y = viewport.cy + Math.sin(angle) * distance;
       if (x < -2 || x > viewport.width + 2 || y < -2 || y > viewport.height + 2) continue;
-      context.fillStyle = `rgb(224 236 255 / ${twinkle * 72 * visibility}%)`;
-      context.beginPath();
-      context.arc(x, y, star.radius, 0, TAU);
-      context.fill();
+      targetContext.fillStyle = `rgb(224 236 255 / ${twinkle * 72 * visibility}%)`;
+      targetContext.beginPath();
+      targetContext.arc(x, y, star.radius, 0, TAU);
+      targetContext.fill();
     }
 
-    drawShootingStars(visibility, shortSide);
-    context.restore();
+    drawShootingStars(targetContext, visibility, shortSide);
+    targetContext.restore();
   }
 
-  function drawShootingStars(visibility, shortSide) {
+  function drawShootingStars(targetContext, visibility, shortSide) {
     for (const meteor of SHOOTING_STARS) {
       const age = (state.time + meteor.offset) % meteor.period;
       if (age > meteor.duration) continue;
@@ -780,15 +787,15 @@
       const angle = Math.atan2(meteor.dy * viewport.height, meteor.dx * viewport.width);
       const tailX = headX - Math.cos(angle) * length;
       const tailY = headY - Math.sin(angle) * length;
-      const trail = context.createLinearGradient(tailX, tailY, headX, headY);
+      const trail = targetContext.createLinearGradient(tailX, tailY, headX, headY);
       trail.addColorStop(0, 'rgb(210 230 255 / 0%)');
       trail.addColorStop(1, `rgb(235 245 255 / ${68 * alpha}%)`);
-      context.strokeStyle = trail;
-      context.lineWidth = 1.1;
-      context.beginPath();
-      context.moveTo(tailX, tailY);
-      context.lineTo(headX, headY);
-      context.stroke();
+      targetContext.strokeStyle = trail;
+      targetContext.lineWidth = 1.1;
+      targetContext.beginPath();
+      targetContext.moveTo(tailX, tailY);
+      targetContext.lineTo(headX, headY);
+      targetContext.stroke();
     }
   }
 
@@ -991,6 +998,7 @@
         SKY: state.config.SKY,
         GRAIN: state.config.GRAIN,
         EXPOSURE: state.config.EXPOSURE,
+        NIGHT: state.transition?.sourceNight ?? 0,
       };
       state.skyBlend = 0;
     }
@@ -1167,7 +1175,13 @@
   function setMode(name) {
     if (!MODES[name]) return;
     if (name === selectedMode()) return;
-    state.transition = { target: name, phase: 'out', elapsed: 0, from: state.weatherLevel };
+    state.transition = {
+      target: name,
+      phase: 'out',
+      elapsed: 0,
+      from: state.weatherLevel,
+      sourceNight: nightVisibility(),
+    };
     updateButtons(name);
     if (state.adjustments[name]) updateAdjustmentControls(name);
     try {
