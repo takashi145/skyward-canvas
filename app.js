@@ -6,7 +6,7 @@
   const MAX_FRAME_TIME = 0.05;
   const TRANSITION = Object.freeze({ out: 0.4, pause: 0.05, in: 0.7, sky: 1.15 });
   const DAY_NIGHT_DURATION = 2.8;
-  const STAR_ROTATION_SPEED = TAU / (12 * 60);
+  const STAR_ROTATION_SPEED = TAU / (60 * 60);
   const SETTINGS_KEY = 'skyward.weather-adjustments';
   const STORM_KEY = 'skyward.rain-storm';
   const NIGHT_KEY = 'skyward.clear-night';
@@ -106,7 +106,9 @@
     radius: randomBetween(0.35, 1.25),
     phase: Math.random() * TAU,
     speed: randomBetween(0.35, 0.85),
+    color: Math.random() < 0.18 ? '255 225 185' : '214 231 255',
   }));
+  let deepSkyTexture = null;
   const SHOOTING_STARS = Object.freeze([
     { period: 19, offset: 0, x: 0.12, y: 0.14, dx: 0.16, dy: 0.10, duration: 0.9 },
     { period: 31, offset: 11, x: 0.58, y: 0.09, dx: 0.13, dy: 0.08, duration: 0.75 },
@@ -741,37 +743,121 @@
     return state.mode === 'clear' ? state.weatherLevel * state.nightLevel : 0;
   }
 
+  function createDeepSkyTexture() {
+    const texture = document.createElement('canvas');
+    texture.width = texture.height = 1536;
+    const target = texture.getContext('2d');
+    const haze = document.createElement('canvas');
+    haze.width = haze.height = 384;
+    const hazeContext = haze.getContext('2d');
+    const pixels = hazeContext.createImageData(haze.width, haze.height);
+    const grids = [8, 16, 32].map(size => ({
+      size, values: Array.from({ length: (size + 1) ** 2 }, () => Math.random()),
+    }));
+    const noise = (u, v, { size, values }) => {
+      const x = u * size;
+      const y = v * size;
+      const ix = Math.floor(x);
+      const iy = Math.floor(y);
+      const fx = smoothstep(x - ix);
+      const fy = smoothstep(y - iy);
+      const index = iy * (size + 1) + ix;
+      return interpolate(
+        interpolate(values[index], values[index + 1], fx),
+        interpolate(values[index + size + 1], values[index + size + 2], fx), fy,
+      );
+    };
+    // 帯の幅と明るさを不規則に変え、遠い星々が重なる淡い光を作る。
+    for (let y = 0; y < haze.height; y += 1) {
+      for (let x = 0; x < haze.width; x += 1) {
+        const u = x / haze.width;
+        const v = y / haze.height;
+        const across = u - 0.5 + (v - 0.5) * 0.62;
+        const structure = noise(u, v, grids[0]);
+        const curve = across + Math.sin(v * 9) * 0.025 + (structure - 0.5) * 0.06;
+        const grain = structure * 0.55 + noise(u, v, grids[1]) * 0.3
+          + noise(u, v, grids[2]) * 0.15;
+        const width = 0.12 + noise(v, 0.5, grids[0]) * 0.06;
+        const band = Math.exp(-((curve / width) ** 2));
+        const edge = 1 - smoothstep((Math.hypot(u - 0.5, v - 0.5) - 0.38) / 0.12);
+        const index = (y * haze.width + x) * 4;
+        pixels.data[index] = 139;
+        pixels.data[index + 1] = 156;
+        pixels.data[index + 2] = 192;
+        pixels.data[index + 3] = Math.round(band * grain ** 1.5 * edge * 48);
+      }
+    }
+    hazeContext.putImageData(pixels, 0, 0);
+    target.drawImage(haze, 0, 0, texture.width, texture.height);
+
+    for (let index = 0; index < 2600; index += 1) {
+      const u = Math.random();
+      const v = Math.random();
+      const distance = Math.hypot(u - 0.5, v - 0.5);
+      if (distance > 0.49) continue;
+      const across = u - 0.5 + (v - 0.5) * 0.62 + Math.sin(v * 9) * 0.025;
+      const inBand = Math.exp(-((across / 0.13) ** 2));
+      if (Math.random() > 0.24 + inBand * 0.76) continue;
+      const alpha = randomBetween(0.18, 0.58) * (1 - smoothstep((distance - 0.43) / 0.06));
+      target.fillStyle = `rgba(202,218,247,${alpha})`;
+      target.beginPath();
+      target.arc(u * texture.width, v * texture.height, randomBetween(0.35, 0.95), 0, TAU);
+      target.fill();
+    }
+    return texture;
+  }
+
   function drawNightAtmosphere(targetContext, visibility) {
     if (visibility <= 0.001) return;
+    if (!deepSkyTexture) deepSkyTexture = createDeepSkyTexture();
 
     const shortSide = Math.min(viewport.width, viewport.height);
+    const time = reducedMotion ? 0 : state.time;
     targetContext.save();
     targetContext.globalCompositeOperation = 'source-over';
 
     const nightSky = targetContext.createLinearGradient(0, 0, 0, viewport.height);
-    nightSky.addColorStop(0, `rgb(5 10 24 / ${98 * visibility}%)`);
-    nightSky.addColorStop(0.55, `rgb(9 16 32 / ${97 * visibility}%)`);
-    nightSky.addColorStop(1, `rgb(7 13 28 / ${98 * visibility}%)`);
+    nightSky.addColorStop(0, `rgb(2 5 14 / ${100 * visibility}%)`);
+    nightSky.addColorStop(0.48, `rgb(6 12 25 / ${100 * visibility}%)`);
+    nightSky.addColorStop(1, `rgb(3 7 17 / ${100 * visibility}%)`);
     targetContext.fillStyle = nightSky;
     targetContext.fillRect(0, 0, viewport.width, viewport.height);
 
     targetContext.globalCompositeOperation = 'screen';
     const skyRadius = Math.hypot(viewport.width, viewport.height) / 2;
-    const rotation = state.time * STAR_ROTATION_SPEED;
+    const rotation = time * STAR_ROTATION_SPEED;
+    const drift = Math.sin(time / 42);
+    const deepRadius = skyRadius * (1.14 + drift * 0.018);
+    targetContext.save();
+    targetContext.translate(viewport.cx, viewport.cy);
+    targetContext.rotate(rotation);
+    targetContext.globalAlpha = visibility;
+    targetContext.drawImage(deepSkyTexture, -deepRadius, -deepRadius, deepRadius * 2, deepRadius * 2);
+    targetContext.restore();
+
     for (const star of STARS) {
-      const twinkle = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(state.time * star.speed + star.phase));
+      const twinkle = 0.78 + 0.22 * (0.5 + 0.5 * Math.sin(time * star.speed * 0.65 + star.phase));
       const angle = star.angle + rotation;
-      const distance = star.distance * skyRadius;
+      const distance = star.distance * skyRadius * (1 + drift * 0.045);
       const x = viewport.cx + Math.cos(angle) * distance;
       const y = viewport.cy + Math.sin(angle) * distance;
       if (x < -2 || x > viewport.width + 2 || y < -2 || y > viewport.height + 2) continue;
-      targetContext.fillStyle = `rgb(224 236 255 / ${twinkle * 72 * visibility}%)`;
+      if (star.radius > 1.08) {
+        const glowRadius = star.radius * 6;
+        const glow = targetContext.createRadialGradient(x, y, 0, x, y, glowRadius);
+        glow.addColorStop(0, `rgb(${star.color} / ${twinkle * 24 * visibility}%)`);
+        glow.addColorStop(0.2, `rgb(${star.color} / ${twinkle * 7 * visibility}%)`);
+        glow.addColorStop(1, `rgb(${star.color} / 0%)`);
+        targetContext.fillStyle = glow;
+        targetContext.fillRect(x - glowRadius, y - glowRadius, glowRadius * 2, glowRadius * 2);
+      }
+      targetContext.fillStyle = `rgb(${star.color} / ${twinkle * 82 * visibility}%)`;
       targetContext.beginPath();
       targetContext.arc(x, y, star.radius, 0, TAU);
       targetContext.fill();
     }
 
-    drawShootingStars(targetContext, visibility, shortSide);
+    if (!reducedMotion) drawShootingStars(targetContext, visibility, shortSide);
     targetContext.restore();
   }
 
