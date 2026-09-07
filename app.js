@@ -6,10 +6,12 @@
   const MAX_FRAME_TIME = 0.05;
   const TRANSITION = Object.freeze({ out: 0.4, pause: 0.05, in: 0.7, sky: 1.15 });
   const DAY_NIGHT_DURATION = 2.8;
-  const STAR_ROTATION_SPEED = TAU / (60 * 60);
+  const STAR_ROTATION_SPEED = TAU / (6 * 60);
+  const STAR_APPROACH = Object.freeze({ speed: 0.035, near: 0.2, far: 1.8 });
   const SETTINGS_KEY = 'skyward.weather-adjustments';
   const STORM_KEY = 'skyward.rain-storm';
   const NIGHT_KEY = 'skyward.clear-night';
+  const NIGHT_MOTION_KEY = 'skyward.night-motion';
   const VOLUME_KEY = 'skyward.ambient-volume';
   const IMPACT_KEY = 'skyward.screen-impacts';
   const STORM = Object.freeze({ boltAmplitude: 0.78, boltGap: [5, 14], windMultiplier: 1.45 });
@@ -100,14 +102,20 @@
       CYCLE: 0.55,
     }),
   });
-  const STARS = Array.from({ length: 180 }, () => ({
-    angle: Math.random() * TAU,
-    distance: Math.sqrt(Math.random()),
-    radius: randomBetween(0.35, 1.25),
-    phase: Math.random() * TAU,
-    speed: randomBetween(0.35, 0.85),
-    color: Math.random() < 0.18 ? '255 225 185' : '214 231 255',
-  }));
+  const STARS = Array.from({ length: 180 }, () => {
+    const depth = randomBetween(0.6, STAR_APPROACH.far);
+    return {
+      angle: Math.random() * TAU,
+      distance: Math.sqrt(Math.random()) * depth,
+      depth,
+      birthDepth: depth,
+      age: 2,
+      radius: randomBetween(0.35, 1.25),
+      phase: Math.random() * TAU,
+      speed: randomBetween(0.35, 0.85),
+      color: Math.random() < 0.18 ? '255 225 185' : '214 231 255',
+    };
+  });
   let deepSkyTexture = null;
   const SHOOTING_STARS = Object.freeze([
     { period: 19, offset: 0, x: 0.12, y: 0.14, dx: 0.16, dy: 0.10, duration: 0.9 },
@@ -124,6 +132,10 @@
   const stormButton = document.getElementById('b-storm');
   const impactButton = document.getElementById('b-impact');
   const nightButton = document.getElementById('b-night');
+  const nightMotionButtons = {
+    rotation: document.getElementById('b-rotation'),
+    approach: document.getElementById('b-approach'),
+  };
   const soundButton = document.getElementById('b-sound');
   const settingsButton = document.getElementById('b-settings');
   const settingsPanel = document.getElementById('settings-panel');
@@ -158,6 +170,8 @@
     storm: startsStormy,
     nightLevel: startsAtNight ? 1 : 0,
     nightTarget: startsAtNight ? 1 : 0,
+    nightRotationTime: 0,
+    nightMotion: loadNightMotionPreference(),
     soundEnabled: false,
     volume: loadVolumePreference(),
     impactsEnabled: loadImpactPreference(),
@@ -307,6 +321,37 @@
 
   function currentAdjustment() {
     return state.adjustments[state.mode] ?? NO_ADJUSTMENT;
+  }
+
+  function loadNightMotionPreference() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(NIGHT_MOTION_KEY));
+      return { rotation: saved?.rotation === true, approach: saved?.approach === true };
+    } catch {
+      return { rotation: false, approach: false };
+    }
+  }
+
+  function toggleNightMotion(name) {
+    state.nightMotion[name] = !state.nightMotion[name];
+    try {
+      localStorage.setItem(NIGHT_MOTION_KEY, JSON.stringify(state.nightMotion));
+    } catch {
+      // 保存できない環境でも、そのセッション中の設定は維持する。
+    }
+    updateNightMotionButtons();
+    showControls();
+  }
+
+  function updateNightMotionButtons() {
+    const visible = selectedMode() === 'clear' && state.nightTarget === 1;
+    for (const [name, button] of Object.entries(nightMotionButtons)) {
+      button.hidden = !visible;
+      button.disabled = reducedMotion;
+      button.title = reducedMotion ? '端末の「視差効果を減らす」設定により停止しています' : '';
+      button.classList.toggle('on', state.nightMotion[name]);
+      button.setAttribute('aria-checked', String(state.nightMotion[name]));
+    }
   }
 
   function createLayers() {
@@ -636,6 +681,7 @@
     state.time += deltaTime;
     updateTransition(deltaTime);
     updateNight(deltaTime);
+    updateNightMotion(deltaTime);
     const intensity = weatherIntensity();
     updateWind(intensity);
     updateBolts(deltaTime);
@@ -743,6 +789,26 @@
     return state.mode === 'clear' ? state.weatherLevel * state.nightLevel : 0;
   }
 
+  function updateNightMotion(deltaTime) {
+    if (reducedMotion) return;
+    const visibility = Math.max(nightVisibility(), (state.previousSky?.NIGHT ?? 0) * (1 - state.skyBlend));
+    if (visibility <= 0.001) return;
+    const elapsed = deltaTime * visibility;
+    if (state.nightMotion.rotation) state.nightRotationTime += elapsed;
+    if (!state.nightMotion.approach) return;
+    for (const star of STARS) {
+      star.age += elapsed;
+      star.depth -= elapsed * STAR_APPROACH.speed;
+      // 視界を通り過ぎた星は、奥でフェードインして次の流れにつなげる。
+      if (star.depth <= STAR_APPROACH.near || star.distance / star.depth > 1.25) {
+        star.depth = star.birthDepth = STAR_APPROACH.far;
+        star.distance = Math.sqrt(Math.random()) * 1.3;
+        star.angle = Math.random() * TAU;
+        star.age = 0;
+      }
+    }
+  }
+
   function createDeepSkyTexture() {
     const texture = document.createElement('canvas');
     texture.width = texture.height = 1536;
@@ -825,25 +891,26 @@
 
     targetContext.globalCompositeOperation = 'screen';
     const skyRadius = Math.hypot(viewport.width, viewport.height) / 2;
-    const rotation = time * STAR_ROTATION_SPEED;
-    const drift = Math.sin(time / 42);
-    const deepRadius = skyRadius * (1.14 + drift * 0.018);
+    const motionTime = reducedMotion ? 0 : state.nightRotationTime;
+    const rotation = motionTime * STAR_ROTATION_SPEED;
+    const deepRadius = skyRadius * 1.14;
+    // 空全体の回転に、明るい星へ近づいていく動きを重ねる。
     targetContext.save();
     targetContext.translate(viewport.cx, viewport.cy);
     targetContext.rotate(rotation);
     targetContext.globalAlpha = visibility;
     targetContext.drawImage(deepSkyTexture, -deepRadius, -deepRadius, deepRadius * 2, deepRadius * 2);
-    targetContext.restore();
+    targetContext.globalAlpha = 1;
 
     for (const star of STARS) {
-      const twinkle = 0.78 + 0.22 * (0.5 + 0.5 * Math.sin(time * star.speed * 0.65 + star.phase));
-      const angle = star.angle + rotation;
-      const distance = star.distance * skyRadius * (1 + drift * 0.045);
-      const x = viewport.cx + Math.cos(angle) * distance;
-      const y = viewport.cy + Math.sin(angle) * distance;
-      if (x < -2 || x > viewport.width + 2 || y < -2 || y > viewport.height + 2) continue;
+      const fade = smoothstep(star.age / 1.5) * smoothstep((star.depth - STAR_APPROACH.near) / 0.16);
+      const twinkle = (0.78 + 0.22 * (0.5 + 0.5 * Math.sin(time * star.speed * 0.65 + star.phase))) * fade;
+      const distance = star.distance / star.depth * skyRadius;
+      const radius = star.radius * clamp(Math.sqrt(star.birthDepth / star.depth), 0.8, 1.35);
+      const x = Math.cos(star.angle) * distance;
+      const y = Math.sin(star.angle) * distance;
       if (star.radius > 1.08) {
-        const glowRadius = star.radius * 6;
+        const glowRadius = radius * 6;
         const glow = targetContext.createRadialGradient(x, y, 0, x, y, glowRadius);
         glow.addColorStop(0, `rgb(${star.color} / ${twinkle * 24 * visibility}%)`);
         glow.addColorStop(0.2, `rgb(${star.color} / ${twinkle * 7 * visibility}%)`);
@@ -853,10 +920,11 @@
       }
       targetContext.fillStyle = `rgb(${star.color} / ${twinkle * 82 * visibility}%)`;
       targetContext.beginPath();
-      targetContext.arc(x, y, star.radius, 0, TAU);
+      targetContext.arc(x, y, radius, 0, TAU);
       targetContext.fill();
     }
 
+    targetContext.restore();
     if (!reducedMotion) drawShootingStars(targetContext, visibility, shortSide);
     targetContext.restore();
   }
@@ -1156,6 +1224,7 @@
     nightButton.classList.toggle('on', isNight);
     nightButton.setAttribute('aria-checked', String(isNight));
     nightButton.setAttribute('aria-label', isNight ? '昼に切り替え' : '夜に切り替え');
+    updateNightMotionButtons();
   }
 
   function toggleNight() {
@@ -1300,6 +1369,9 @@
     stormButton.addEventListener('click', toggleStorm);
     impactButton.addEventListener('click', toggleImpacts);
     nightButton.addEventListener('click', toggleNight);
+    for (const [name, button] of Object.entries(nightMotionButtons)) {
+      button.addEventListener('click', () => toggleNightMotion(name));
+    }
     soundButton.addEventListener('click', toggleSound);
     volumeControl.addEventListener('input', () => setVolume(Number(volumeControl.value)));
     for (const [name, control] of Object.entries(controls)) {

@@ -179,6 +179,11 @@
       display: none;
     }
 
+    .setting-toggle:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
     #b-night {
       margin-top: 0;
       padding-top: 2px;
@@ -239,6 +244,14 @@
     </button>
     <button id="b-night" class="setting-toggle" type="button" role="switch" aria-checked="false" hidden>
       <span>夜</span>
+      <span class="switch-track" aria-hidden="true"></span>
+    </button>
+    <button id="b-rotation" class="setting-toggle" type="button" role="switch" aria-checked="false" hidden>
+      <span>回転</span>
+      <span class="switch-track" aria-hidden="true"></span>
+    </button>
+    <button id="b-approach" class="setting-toggle" type="button" role="switch" aria-checked="false" hidden>
+      <span>星空に吸い込まれる</span>
       <span class="switch-track" aria-hidden="true"></span>
     </button>
     <button id="b-sound" class="setting-toggle" type="button" role="switch" aria-checked="false">
